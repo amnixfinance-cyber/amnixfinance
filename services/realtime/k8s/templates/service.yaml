@@ -1,0 +1,68 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "centrifugo.fullname" . }}
+  namespace: {{ include "centrifugo.namespace" . }}
+  labels:
+    {{- include "centrifugo.labels" . | nindent 4 }}
+    {{- with .Values.service.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  {{- if and (eq .Values.service.type "ClusterIP") .Values.service.clusterIP }}
+  clusterIP: {{ .Values.service.clusterIP }}
+  {{- end }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: {{ .Values.servers.external.port }}
+      protocol: TCP
+      name: external
+      {{- if .Values.service.appProtocol }}
+      appProtocol: {{ .Values.service.appProtocol }}
+      {{- end }}
+      {{- if (and (eq .Values.service.type "NodePort") (not (empty .Values.service.nodePort))) }}
+      nodePort: {{ .Values.service.nodePort }}
+      {{- end }}
+{{- if not .Values.serviceInternal.useSeparate }}
+    - port: {{ .Values.serviceInternal.port }}
+      targetPort: {{ .Values.servers.internal.port }}
+      protocol: TCP
+      name: internal
+      {{- if .Values.serviceInternal.appProtocol }}
+      appProtocol: {{ .Values.serviceInternal.appProtocol }}
+      {{- end }}
+      {{- if (and (eq .Values.service.type "NodePort") (not (empty .Values.serviceInternal.nodePort))) }}
+      nodePort: {{ .Values.serviceInternal.nodePort }}
+      {{- end }}
+{{- end }}
+{{- if not .Values.serviceGrpc.useSeparate }}
+    - port: {{ .Values.serviceGrpc.port }}
+      targetPort: {{ .Values.servers.grpc.port }}
+      protocol: TCP
+      name: grpc
+      {{- if .Values.serviceGrpc.appProtocol }}
+      appProtocol: {{ .Values.serviceGrpc.appProtocol }}
+      {{- end }}
+      {{- if (and (eq .Values.service.type "NodePort") (not (empty .Values.serviceGrpc.nodePort))) }}
+      nodePort: {{ .Values.serviceGrpc.nodePort }}
+      {{- end }}
+{{- end }}
+{{- if not .Values.serviceUniGrpc.useSeparate }}
+    - port: {{ .Values.serviceUniGrpc.port }}
+      targetPort: {{ .Values.servers.uniGrpc.port }}
+      protocol: TCP
+      name: uni-grpc
+      {{- if .Values.serviceUniGrpc.appProtocol }}
+      appProtocol: {{ .Values.serviceUniGrpc.appProtocol }}
+      {{- end }}
+      {{- if (and (eq .Values.service.type "NodePort") (not (empty .Values.serviceUniGrpc.nodePort))) }}
+      nodePort: {{ .Values.serviceUniGrpc.nodePort }}
+      {{- end }}
+{{- end }}
+  selector:
+    {{- include "centrifugo.selectorLabels" . | nindent 4 }}

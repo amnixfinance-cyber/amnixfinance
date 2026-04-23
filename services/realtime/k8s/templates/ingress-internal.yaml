@@ -1,0 +1,67 @@
+{{- if .Values.ingressInternal.enabled }}
+{{- $fullName := include "centrifugo.fullname" . }}
+{{- $namespace := include "centrifugo.namespace" . }}
+{{- $svcPort := .Values.serviceInternal.port }}
+{{- if .Capabilities.APIVersions.Has "networking.k8s.io/v1" }}
+apiVersion: networking.k8s.io/v1
+{{- else }}
+apiVersion: networking.k8s.io/v1beta1
+{{- end }}
+kind: Ingress
+metadata:
+  name: {{ $fullName }}-internal
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "centrifugo.labels" . | nindent 4 }}
+  {{- with .Values.ingressInternal.labels }}
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.ingressInternal.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.ingressInternal.ingressClassName }}
+  ingressClassName: {{ .Values.ingressInternal.ingressClassName }}
+  {{- end }}
+  {{- if .Values.ingressInternal.tls }}
+  tls:
+    {{- range .Values.ingressInternal.tls }}
+    - hosts:
+        {{- range .hosts }}
+        - {{ . | quote }}
+        {{- end }}
+      secretName: {{ .secretName }}
+    {{- end }}
+  {{- end }}
+  rules:
+    {{- range .Values.ingressInternal.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ . }}
+            {{- if $.Capabilities.APIVersions.Has "networking.k8s.io/v1" }}
+            pathType: {{ $.Values.ingressInternal.pathType }}
+            {{- end }}
+            backend:
+              {{- if $.Capabilities.APIVersions.Has "networking.k8s.io/v1" }}
+              service:
+                {{- if $.Values.serviceInternal.enabled }}
+                name: {{ $fullName }}-internal
+                {{- else }}
+                name: {{ $fullName }}
+                {{- end }}
+                port:
+                  number: {{ $svcPort }}
+              {{- else }}
+              {{- if $.Values.serviceInternal.enabled }}
+              serviceName: {{ $fullName }}-internal
+              {{- else }}
+              serviceName: {{ $fullName }}
+              {{- end }}
+              servicePort: {{ $svcPort }}
+              {{- end }}
+          {{- end }}
+    {{- end }}
+{{- end }}
