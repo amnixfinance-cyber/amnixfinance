@@ -127,6 +127,12 @@ spec:
         chart: vcluster
         version: 0.33.1
         syncWave: "3"
+      - name: clickhouse
+        namespace: clickhouse
+        repoURL: https://charts.bitnami.com/bitnami
+        chart: clickhouse
+        version: 9.4.4
+        syncWave: "3"
       - name: lago
         namespace: lago
         repoURL: https://getlago.github.io/lago-helm-charts
