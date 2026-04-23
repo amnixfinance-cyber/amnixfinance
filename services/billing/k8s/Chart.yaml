@@ -1,0 +1,6 @@
+apiVersion: v2
+name: billing
+description: Formance Ledger billing service Helm chart
+type: application
+version: 1.0.0
+appVersion: "1.26.0"

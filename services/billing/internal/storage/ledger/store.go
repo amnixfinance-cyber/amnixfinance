@@ -1,0 +1,352 @@
+package ledger
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"sync/atomic"
+
+	"github.com/uptrace/bun"
+	"go.opentelemetry.io/otel/metric"
+	noopmetrics "go.opentelemetry.io/otel/metric/noop"
+	"go.opentelemetry.io/otel/trace"
+	nooptracer "go.opentelemetry.io/otel/trace/noop"
+
+	"github.com/formancehq/go-libs/v5/pkg/storage/bun/paginate"
+	"github.com/formancehq/go-libs/v5/pkg/storage/migrations"
+	"github.com/formancehq/go-libs/v5/pkg/storage/postgres"
+
+	ledger "github.com/formancehq/ledger/internal"
+	"github.com/formancehq/ledger/internal/storage/bucket"
+	"github.com/formancehq/ledger/internal/storage/common"
+	"github.com/formancehq/ledger/internal/tracing"
+)
+
+type Store struct {
+	db     bun.IDB
+	bucket bucket.Bucket
+	ledger ledger.Ledger
+
+	// aloneInBucket is a shared optimization hint (per bucket) indicating whether
+	// this ledger is the only one in its bucket. The pointer is shared across all
+	// stores in the same bucket via the Factory, so updating it from any store
+	// (e.g. when a new ledger is created) immediately affects all stores.
+	aloneInBucket *atomic.Bool
+
+	tracer                             trace.Tracer
+	meter                              metric.Meter
+	checkBucketSchemaHistogram         metric.Int64Histogram
+	checkLedgerSchemaHistogram         metric.Int64Histogram
+	updateAccountsMetadataHistogram    metric.Int64Histogram
+	deleteAccountMetadataHistogram     metric.Int64Histogram
+	upsertAccountsHistogram            metric.Int64Histogram
+	getBalancesHistogram               metric.Int64Histogram
+	insertLogHistogram                 metric.Int64Histogram
+	readLogWithIdempotencyKeyHistogram metric.Int64Histogram
+	insertMovesHistogram               metric.Int64Histogram
+	insertTransactionHistogram         metric.Int64Histogram
+	revertTransactionHistogram         metric.Int64Histogram
+	updateTransactionMetadataHistogram metric.Int64Histogram
+	deleteTransactionMetadataHistogram metric.Int64Histogram
+	updateBalancesHistogram            metric.Int64Histogram
+	getVolumesWithBalancesHistogram    metric.Int64Histogram
+	beginTXHistogram                   metric.Int64Histogram
+	commitTXHistogram                  metric.Int64Histogram
+	rollbackTXHistogram                metric.Int64Histogram
+}
+
+func (store *Store) Volumes() common.PaginatedResource[
+	ledger.VolumesWithBalanceByAssetByAccount,
+	ledger.GetVolumesOptions] {
+	return common.NewPaginatedResourceRepository[
+		ledger.VolumesWithBalanceByAssetByAccount,
+		ledger.GetVolumesOptions,
+	](&volumesResourceHandler{store: store}, "account", paginate.OrderAsc)
+}
+
+func (store *Store) AggregatedVolumes() common.Resource[ledger.AggregatedVolumes, ledger.GetAggregatedVolumesOptions] {
+	return common.NewResourceRepository[ledger.AggregatedVolumes, ledger.GetAggregatedVolumesOptions](&aggregatedBalancesResourceRepositoryHandler{
+		store: store,
+	})
+}
+
+func (store *Store) Transactions() common.PaginatedResource[
+	ledger.Transaction,
+	any] {
+	return common.NewPaginatedResourceRepository[ledger.Transaction, any](&transactionsResourceHandler{store: store}, "id", paginate.OrderDesc)
+}
+
+func (store *Store) Logs() common.PaginatedResource[
+	ledger.Log,
+	any] {
+	return common.NewPaginatedResourceRepositoryMapper[ledger.Log, Log, any](&logsResourceHandler{
+		store: store,
+	}, "id", paginate.OrderDesc)
+}
+
+func (store *Store) Accounts() common.PaginatedResource[
+	ledger.Account,
+	any] {
+	return common.NewPaginatedResourceRepository[ledger.Account, any](&accountsResourceHandler{
+		store: store,
+	}, "address", paginate.OrderAsc)
+}
+
+func (store *Store) Schemas() common.PaginatedResource[
+	ledger.Schema,
+	any] {
+	return common.NewPaginatedResourceRepository[ledger.Schema, any](&schemasResourceHandler{
+		store: store,
+	}, "created_at", paginate.OrderDesc)
+}
+
+func (store *Store) BeginTX(ctx context.Context, options *sql.TxOptions) (*Store, *bun.Tx, error) {
+
+	tx, err := tracing.TraceWithMetric(ctx, "BeginTX", store.tracer, store.beginTXHistogram, func(ctx context.Context) (bun.Tx, error) {
+		return store.db.BeginTx(ctx, options)
+	})
+	if err != nil {
+		return nil, nil, postgres.ResolveError(err)
+	}
+	cp := *store
+	cp.db = tx
+
+	return &cp, &tx, nil
+}
+
+func (store *Store) Commit(ctx context.Context) error {
+	switch db := store.db.(type) {
+	case bun.Tx:
+		_, err := tracing.TraceWithMetric(ctx, "Commit", store.tracer, store.commitTXHistogram, tracing.NoResult(func(ctx context.Context) error {
+			return db.Commit()
+		}))
+		return err
+	default:
+		return errors.New("cannot commit transaction: not in a transaction")
+	}
+}
+
+func (store *Store) Rollback(ctx context.Context) error {
+	switch db := store.db.(type) {
+	case bun.Tx:
+		_, err := tracing.TraceWithMetric(ctx, "Rollback", store.tracer, store.rollbackTXHistogram, tracing.NoResult(func(ctx context.Context) error {
+			return db.Rollback()
+		}))
+		return err
+	default:
+		return errors.New("cannot rollback transaction: not in a transaction")
+	}
+}
+
+func (store *Store) GetLedger() ledger.Ledger {
+	return store.ledger
+}
+
+func (store *Store) GetDB() bun.IDB {
+	return store.db
+}
+
+func (store *Store) GetBucket() bucket.Bucket {
+	return store.bucket
+}
+
+func (store *Store) GetPrefixedRelationName(v string) string {
+	return fmt.Sprintf(`"%s".%s`, store.ledger.Bucket, v)
+}
+
+func (store *Store) LockLedger(ctx context.Context) (*Store, bun.IDB, func() error, error) {
+	storeCp := *store
+	switch db := store.db.(type) {
+	case *bun.DB:
+		conn, err := db.Conn(ctx)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+
+		_, err = conn.ExecContext(ctx, `SELECT pg_advisory_lock(hashtext(?))`, fmt.Sprintf("ledger:%d", store.ledger.ID))
+		if err != nil {
+			_ = conn.Close()
+			return nil, nil, nil, err
+		}
+		storeCp.db = conn
+
+		return &storeCp, storeCp.db, func() error {
+			_, err := conn.ExecContext(ctx, `SELECT pg_advisory_unlock(hashtext(?))`, fmt.Sprintf("ledger:%d", store.ledger.ID))
+			if err != nil {
+				return err
+			}
+			return conn.Close()
+		}, nil
+	case bun.Tx:
+		_, err := db.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext(?))`, fmt.Sprintf("ledger:%d", store.ledger.ID))
+		if err != nil {
+			return nil, nil, nil, err
+		}
+
+		return store, db, func() error {
+			// xact-scoped advisory locks are released automatically – nothing to do
+			return nil
+		}, nil
+	default:
+		panic(fmt.Errorf("invalid db type: %T", store.db))
+	}
+}
+
+// newScopedSelect creates a new select query scoped to the current ledger.
+// When the ledger is alone in its bucket, we skip the WHERE clause to avoid
+// a degraded seq scan plan (selectivity ~100%). Otherwise, we filter by ledger
+// name to use the composite index (ledger, id) efficiently.
+//
+// This relies on aloneInBucket being up to date (shared across the bucket).
+func (store *Store) newScopedSelect() *bun.SelectQuery {
+	q := store.db.NewSelect()
+	if store.aloneInBucket == nil || !store.aloneInBucket.Load() {
+		q = q.Where("ledger = ?", store.ledger.Name)
+	}
+	return q
+}
+
+func (store *Store) SetAloneInBucket(alone bool) {
+	if store.aloneInBucket != nil {
+		store.aloneInBucket.Store(alone)
+	}
+}
+
+func New(db bun.IDB, bucket bucket.Bucket, l ledger.Ledger, opts ...Option) *Store {
+	ret := &Store{
+		db:     db,
+		ledger: l,
+		bucket: bucket,
+	}
+	for _, opt := range append(defaultOptions, opts...) {
+		opt(ret)
+	}
+
+	var err error
+	ret.beginTXHistogram, err = ret.meter.Int64Histogram("store.begin_tx")
+	if err != nil {
+		panic(err)
+	}
+
+	ret.commitTXHistogram, err = ret.meter.Int64Histogram("store.commit_tx")
+	if err != nil {
+		panic(err)
+	}
+
+	ret.rollbackTXHistogram, err = ret.meter.Int64Histogram("store.rollback_tx")
+	if err != nil {
+		panic(err)
+	}
+
+	ret.checkBucketSchemaHistogram, err = ret.meter.Int64Histogram("store.check_bucket_schema", metric.WithUnit("ms"))
+	if err != nil {
+		panic(err)
+	}
+
+	ret.checkLedgerSchemaHistogram, err = ret.meter.Int64Histogram("store.check_ledger_schema", metric.WithUnit("ms"))
+	if err != nil {
+		panic(err)
+	}
+
+	ret.updateAccountsMetadataHistogram, err = ret.meter.Int64Histogram("store.update_accounts_metadata", metric.WithUnit("ms"))
+	if err != nil {
+		panic(err)
+	}
+
+	ret.deleteAccountMetadataHistogram, err = ret.meter.Int64Histogram("store.delete_account_metadata", metric.WithUnit("ms"))
+	if err != nil {
+		panic(err)
+	}
+
+	ret.upsertAccountsHistogram, err = ret.meter.Int64Histogram("store.upsert_accounts", metric.WithUnit("ms"))
+	if err != nil {
+		panic(err)
+	}
+
+	ret.getBalancesHistogram, err = ret.meter.Int64Histogram("store.get_balances", metric.WithUnit("ms"))
+	if err != nil {
+		panic(err)
+	}
+
+	ret.insertLogHistogram, err = ret.meter.Int64Histogram("store.insert_log", metric.WithUnit("ms"))
+	if err != nil {
+		panic(err)
+	}
+
+	ret.readLogWithIdempotencyKeyHistogram, err = ret.meter.Int64Histogram("store.read_log_with_idempotency_key", metric.WithUnit("ms"))
+	if err != nil {
+		panic(err)
+	}
+
+	ret.insertMovesHistogram, err = ret.meter.Int64Histogram("store.insert_moves", metric.WithUnit("ms"))
+	if err != nil {
+		panic(err)
+	}
+
+	ret.insertTransactionHistogram, err = ret.meter.Int64Histogram("store.insert_transaction", metric.WithUnit("ms"))
+	if err != nil {
+		panic(err)
+	}
+
+	ret.revertTransactionHistogram, err = ret.meter.Int64Histogram("store.revert_transaction", metric.WithUnit("ms"))
+	if err != nil {
+		panic(err)
+	}
+
+	ret.updateTransactionMetadataHistogram, err = ret.meter.Int64Histogram("store.update_transaction_metadata", metric.WithUnit("ms"))
+	if err != nil {
+		panic(err)
+	}
+
+	ret.deleteTransactionMetadataHistogram, err = ret.meter.Int64Histogram("store.delete_transaction_metadata", metric.WithUnit("ms"))
+	if err != nil {
+		panic(err)
+	}
+
+	ret.updateBalancesHistogram, err = ret.meter.Int64Histogram("store.update_balances", metric.WithUnit("ms"))
+	if err != nil {
+		panic(err)
+	}
+
+	ret.getVolumesWithBalancesHistogram, err = ret.meter.Int64Histogram("store.get_volumes_with_balances", metric.WithUnit("ms"))
+	if err != nil {
+		panic(err)
+	}
+
+	return ret
+}
+
+func (store *Store) HasMinimalVersion(ctx context.Context) (bool, error) {
+	return store.bucket.HasMinimalVersion(ctx, store.db)
+}
+
+func (store *Store) GetMigrationsInfo(ctx context.Context) ([]migrations.Info, error) {
+	return store.bucket.GetMigrationsInfo(ctx, store.db)
+}
+
+func (store *Store) WithDB(db bun.IDB) *Store {
+	ret := *store
+	ret.db = db
+
+	return &ret
+}
+
+type Option func(s *Store)
+
+func WithMeter(meter metric.Meter) Option {
+	return func(s *Store) {
+		s.meter = meter
+	}
+}
+
+func WithTracer(tracer trace.Tracer) Option {
+	return func(s *Store) {
+		s.tracer = tracer
+	}
+}
+
+var defaultOptions = []Option{
+	WithMeter(noopmetrics.Meter{}),
+	WithTracer(nooptracer.Tracer{}),
+}
