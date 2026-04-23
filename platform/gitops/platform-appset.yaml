@@ -92,6 +92,16 @@ spec:
         repoURL: https://open-policy-agent.github.io/gatekeeper/charts
         chart: gatekeeper
         version: 3.22.0
+      - name: lago
+        namespace: lago
+        repoURL: https://getlago.github.io/lago-helm-charts
+        chart: lago
+        version: 1.27.1
+      - name: grafana-oncall
+        namespace: monitoring
+        repoURL: https://grafana.github.io/helm-charts
+        chart: oncall
+        version: 1.16.5
   template:
     metadata:
       name: '{{name}}'
@@ -111,13 +121,3 @@ spec:
           selfHeal: true
         syncOptions:
         - CreateNamespace=true
-      - name: lago
-        namespace: lago
-        repoURL: https://getlago.github.io/lago-helm-charts
-        chart: lago
-        version: 1.27.1
-      - name: grafana-oncall
-        namespace: monitoring
-        repoURL: https://grafana.github.io/helm-charts
-        chart: oncall
-        version: 1.16.5
