@@ -31,6 +31,14 @@ Enterprise-grade financial intelligence platform built on battle-tested open sou
 **CI/CD:** Tekton v1.11.1
 
 ## Repository Structure
+platform/
+├── cicd/
+│   └── tekton-app.yaml
+└── gitops/
+├── argocd-install.yaml
+└── platform-appset.yaml
+infrastructure/
+
 ## Deployment
 
 ### Step 1 — Install ArgoCD
