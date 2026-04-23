@@ -96,3 +96,18 @@ spec:
           selfHeal: true
         syncOptions:
         - CreateNamespace=true
+      - name: longhorn
+        namespace: longhorn-system
+        repoURL: https://charts.longhorn.io
+        chart: longhorn
+        version: 1.11.1
+      - name: vcluster
+        namespace: vcluster
+        repoURL: https://charts.loft.sh
+        chart: vcluster
+        version: 0.33.1
+      - name: gatekeeper
+        namespace: gatekeeper-system
+        repoURL: https://open-policy-agent.github.io/gatekeeper/charts
+        chart: gatekeeper
+        version: 3.22.0
