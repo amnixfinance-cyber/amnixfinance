@@ -76,3 +76,23 @@ spec:
           selfHeal: true
         syncOptions:
         - CreateNamespace=true
+      - name: loki-stack
+        namespace: monitoring
+        repoURL: https://grafana.github.io/helm-charts
+        chart: loki-stack
+        version: 2.10.3
+      - name: keda
+        namespace: keda
+        repoURL: https://kedacore.github.io/charts
+        chart: keda
+        version: 2.19.0
+      - name: velero
+        namespace: velero
+        repoURL: https://vmware-tanzu.github.io/helm-charts
+        chart: velero
+        version: 12.0.0
+      - name: backstage
+        namespace: backstage
+        repoURL: https://backstage.github.io/charts
+        chart: backstage
+        version: 2.6.3
