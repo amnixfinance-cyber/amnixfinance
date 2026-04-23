@@ -14,12 +14,6 @@ spec:
         version: 1.19.3
         syncWave: "0"
       - name: cert-manager
-        namespace: cert-manager
-        repoURL: https://charts.jetstack.io
-        chart: cert-manager
-        version: v1.20.2
-        syncWave: "0"
-      - name: linkerd-crds
         namespace: linkerd
         repoURL: https://helm.linkerd.io/stable
         chart: linkerd-crds
