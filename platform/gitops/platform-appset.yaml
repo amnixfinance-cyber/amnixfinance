@@ -13,7 +13,7 @@ spec:
         chart: cilium
         version: 1.19.3
         syncWave: "0"
-      - name: cert-manager
+      - name: linkerd-crds
         namespace: linkerd
         repoURL: https://helm.linkerd.io/stable
         chart: linkerd-crds
