@@ -1,0 +1,57 @@
+package testserver
+
+import (
+	"github.com/formancehq/go-libs/v5/pkg/types/collections"
+	"github.com/formancehq/go-libs/v5/pkg/types/pointer"
+	"github.com/formancehq/go-libs/v5/pkg/types/time"
+
+	ledger "github.com/formancehq/ledger/internal"
+	"github.com/formancehq/ledger/pkg/client/models/components"
+)
+
+func ConvertSDKTxToCoreTX(tx *components.V2Transaction) ledger.Transaction {
+	return ledger.Transaction{
+		TransactionData: ledger.TransactionData{
+			Postings:  collections.Map(tx.Postings, ConvertSDKPostingToCorePosting),
+			Timestamp: time.New(tx.Timestamp),
+			Metadata:  tx.Metadata,
+			Reference: func() string {
+				if tx.Reference == nil {
+					return ""
+				}
+				return *tx.Reference
+			}(),
+		},
+		InsertedAt:                 time.New(*tx.InsertedAt),
+		UpdatedAt:                  time.New(*tx.UpdatedAt),
+		ID:                         pointer.For(tx.ID.Uint64()),
+		PostCommitVolumes:          ConvertSDKPostCommitVolumesToCorePostCommitVolumes(tx.PostCommitVolumes),
+		PostCommitEffectiveVolumes: ConvertSDKPostCommitVolumesToCorePostCommitVolumes(tx.PostCommitEffectiveVolumes),
+	}
+}
+
+func ConvertSDKPostCommitVolumesToCorePostCommitVolumes(volumes map[string]map[string]components.V2Volume) ledger.PostCommitVolumes {
+	ret := ledger.PostCommitVolumes{}
+	for account, volumesByAsset := range volumes {
+		for asset, volumes := range volumesByAsset {
+			ret.Merge(ledger.PostCommitVolumes{
+				account: {
+					asset: ledger.Volumes{
+						Input:  volumes.Input,
+						Output: volumes.Output,
+					},
+				},
+			})
+		}
+	}
+	return ret
+}
+
+func ConvertSDKPostingToCorePosting(p components.V2Posting) ledger.Posting {
+	return ledger.Posting{
+		Source:      p.Source,
+		Destination: p.Destination,
+		Asset:       p.Asset,
+		Amount:      p.Amount,
+	}
+}

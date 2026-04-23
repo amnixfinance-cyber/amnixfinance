@@ -59,6 +59,7 @@ jobs:
           helm repo add victoriametrics https://victoriametrics.github.io/helm-charts
           helm repo add weaviate https://weaviate.github.io/weaviate-helm
           helm repo add analytics https://victoriametrics.github.io/helm-charts
+          helm repo add billing https://charts.formance.com
           helm repo add search https://weaviate.github.io/weaviate-helm
           helm repo update
 
@@ -91,6 +92,7 @@ jobs:
           helm search repo victoriametrics/victoria-metrics-single
           helm search repo weaviate/weaviate
           helm search repo analytics/victoria-metrics-single
+          helm search repo billing/ledger
           helm search repo search/weaviate
 
   trivy-scan:

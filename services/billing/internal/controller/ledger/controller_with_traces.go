@@ -1,0 +1,654 @@
+package ledger
+
+import (
+	"context"
+	"database/sql"
+
+	"github.com/uptrace/bun"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
+
+	"github.com/formancehq/go-libs/v5/pkg/storage/bun/paginate"
+	"github.com/formancehq/go-libs/v5/pkg/storage/migrations"
+
+	ledger "github.com/formancehq/ledger/internal"
+	"github.com/formancehq/ledger/internal/queries"
+	"github.com/formancehq/ledger/internal/storage/common"
+	"github.com/formancehq/ledger/internal/tracing"
+)
+
+type ControllerWithTraces struct {
+	underlying Controller
+	tracer     trace.Tracer
+
+	beginTxHistogram                   metric.Int64Histogram
+	commitHistogram                    metric.Int64Histogram
+	rollbackHistogram                  metric.Int64Histogram
+	listTransactionsHistogram          metric.Int64Histogram
+	countTransactionsHistogram         metric.Int64Histogram
+	getTransactionHistogram            metric.Int64Histogram
+	countAccountsHistogram             metric.Int64Histogram
+	listAccountsHistogram              metric.Int64Histogram
+	getAccountHistogram                metric.Int64Histogram
+	getAggregatedBalancesHistogram     metric.Int64Histogram
+	listLogsHistogram                  metric.Int64Histogram
+	importHistogram                    metric.Int64Histogram
+	exportHistogram                    metric.Int64Histogram
+	isDatabaseUpToDateHistogram        metric.Int64Histogram
+	getVolumesWithBalancesHistogram    metric.Int64Histogram
+	getStatsHistogram                  metric.Int64Histogram
+	createTransactionHistogram         metric.Int64Histogram
+	revertTransactionHistogram         metric.Int64Histogram
+	saveTransactionMetadataHistogram   metric.Int64Histogram
+	saveAccountMetadataHistogram       metric.Int64Histogram
+	deleteTransactionMetadataHistogram metric.Int64Histogram
+	deleteAccountMetadataHistogram     metric.Int64Histogram
+	lockLedgerHistogram                metric.Int64Histogram
+	insertSchemaHistogram              metric.Int64Histogram
+	getSchemaHistogram                 metric.Int64Histogram
+	listSchemasHistogram               metric.Int64Histogram
+	runQueryHistogram                  metric.Int64Histogram
+}
+
+func (c *ControllerWithTraces) Info() ledger.Ledger {
+	return c.underlying.Info()
+}
+
+func NewControllerWithTraces(underlying Controller, tracer trace.Tracer, meter metric.Meter) *ControllerWithTraces {
+	ret := &ControllerWithTraces{
+		underlying: underlying,
+		tracer:     tracer,
+	}
+
+	var err error
+	ret.beginTxHistogram, err = meter.Int64Histogram("controller.begin_tx", metric.WithUnit("ms"))
+	if err != nil {
+		panic(err)
+	}
+	ret.listTransactionsHistogram, err = meter.Int64Histogram("controller.list_transactions", metric.WithUnit("ms"))
+	if err != nil {
+		panic(err)
+	}
+	ret.commitHistogram, err = meter.Int64Histogram("controller.commit", metric.WithUnit("ms"))
+	if err != nil {
+		panic(err)
+	}
+	ret.rollbackHistogram, err = meter.Int64Histogram("controller.rollback", metric.WithUnit("ms"))
+	if err != nil {
+		panic(err)
+	}
+	ret.countTransactionsHistogram, err = meter.Int64Histogram("controller.count_transactions", metric.WithUnit("ms"))
+	if err != nil {
+		panic(err)
+	}
+	ret.getTransactionHistogram, err = meter.Int64Histogram("controller.get_transaction", metric.WithUnit("ms"))
+	if err != nil {
+		panic(err)
+	}
+	ret.countAccountsHistogram, err = meter.Int64Histogram("controller.count_accounts", metric.WithUnit("ms"))
+	if err != nil {
+		panic(err)
+	}
+	ret.listAccountsHistogram, err = meter.Int64Histogram("controller.list_accounts", metric.WithUnit("ms"))
+	if err != nil {
+		panic(err)
+	}
+	ret.getAccountHistogram, err = meter.Int64Histogram("controller.get_account", metric.WithUnit("ms"))
+	if err != nil {
+		panic(err)
+	}
+	ret.getAggregatedBalancesHistogram, err = meter.Int64Histogram("controller.get_aggregated_balances", metric.WithUnit("ms"))
+	if err != nil {
+		panic(err)
+	}
+	ret.listLogsHistogram, err = meter.Int64Histogram("controller.list_logs", metric.WithUnit("ms"))
+	if err != nil {
+		panic(err)
+	}
+	ret.importHistogram, err = meter.Int64Histogram("controller.import", metric.WithUnit("ms"))
+	if err != nil {
+		panic(err)
+	}
+	ret.exportHistogram, err = meter.Int64Histogram("controller.export", metric.WithUnit("ms"))
+	if err != nil {
+		panic(err)
+	}
+	ret.isDatabaseUpToDateHistogram, err = meter.Int64Histogram("controller.is_database_up_to_date", metric.WithUnit("ms"))
+	if err != nil {
+		panic(err)
+	}
+	ret.getVolumesWithBalancesHistogram, err = meter.Int64Histogram("controller.get_volumes_with_balances", metric.WithUnit("ms"))
+	if err != nil {
+		panic(err)
+	}
+	ret.getStatsHistogram, err = meter.Int64Histogram("controller.get_stats", metric.WithUnit("ms"))
+	if err != nil {
+		panic(err)
+	}
+	ret.createTransactionHistogram, err = meter.Int64Histogram("controller.create_transaction", metric.WithUnit("ms"))
+	if err != nil {
+		panic(err)
+	}
+	ret.revertTransactionHistogram, err = meter.Int64Histogram("controller.revert_transaction", metric.WithUnit("ms"))
+	if err != nil {
+		panic(err)
+	}
+	ret.saveTransactionMetadataHistogram, err = meter.Int64Histogram("controller.save_transaction_metadata", metric.WithUnit("ms"))
+	if err != nil {
+		panic(err)
+	}
+	ret.saveAccountMetadataHistogram, err = meter.Int64Histogram("controller.save_account_metadata", metric.WithUnit("ms"))
+	if err != nil {
+		panic(err)
+	}
+	ret.deleteTransactionMetadataHistogram, err = meter.Int64Histogram("controller.delete_transaction_metadata", metric.WithUnit("ms"))
+	if err != nil {
+		panic(err)
+	}
+	ret.deleteAccountMetadataHistogram, err = meter.Int64Histogram("controller.delete_account_metadata", metric.WithUnit("ms"))
+	if err != nil {
+		panic(err)
+	}
+	ret.lockLedgerHistogram, err = meter.Int64Histogram("controller.lock_ledger", metric.WithUnit("ms"))
+	if err != nil {
+		panic(err)
+	}
+	ret.insertSchemaHistogram, err = meter.Int64Histogram("controller.insert_schema", metric.WithUnit("ms"))
+	if err != nil {
+		panic(err)
+	}
+	ret.getSchemaHistogram, err = meter.Int64Histogram("controller.get_schema", metric.WithUnit("ms"))
+	if err != nil {
+		panic(err)
+	}
+	ret.listSchemasHistogram, err = meter.Int64Histogram("controller.list_schemas", metric.WithUnit("ms"))
+	if err != nil {
+		panic(err)
+	}
+	ret.runQueryHistogram, err = meter.Int64Histogram("controller.run_query", metric.WithUnit("ms"))
+	if err != nil {
+		panic(err)
+	}
+
+	return ret
+}
+
+func (c *ControllerWithTraces) BeginTX(ctx context.Context, options *sql.TxOptions) (Controller, *bun.Tx, error) {
+	var (
+		ctrl Controller
+		tx   *bun.Tx
+		err  error
+	)
+	ctrl, err = tracing.TraceWithMetric(
+		ctx,
+		"BeginTX",
+		c.tracer,
+		c.beginTxHistogram,
+		func(ctx context.Context) (Controller, error) {
+			ctrl, tx, err = c.underlying.BeginTX(ctx, options)
+			if err != nil {
+				return nil, err
+			}
+
+			ret := *c
+			ret.underlying = ctrl
+
+			return &ret, nil
+		},
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+	return ctrl, tx, nil
+}
+
+func (c *ControllerWithTraces) Commit(ctx context.Context) error {
+	return tracing.SkipResult(tracing.TraceWithMetric(
+		ctx,
+		"Commit",
+		c.tracer,
+		c.commitHistogram,
+		tracing.NoResult(func(ctx context.Context) error {
+			return c.underlying.Commit(ctx)
+		}),
+	))
+}
+
+func (c *ControllerWithTraces) Rollback(ctx context.Context) error {
+	return tracing.SkipResult(tracing.TraceWithMetric(
+		ctx,
+		"Rollback",
+		c.tracer,
+		c.rollbackHistogram,
+		tracing.NoResult(func(ctx context.Context) error {
+			return c.underlying.Rollback(ctx)
+		}),
+	))
+}
+
+func (c *ControllerWithTraces) GetMigrationsInfo(ctx context.Context) ([]migrations.Info, error) {
+	return tracing.TraceWithMetric(
+		ctx,
+		"GetMigrationsInfo",
+		c.tracer,
+		c.listTransactionsHistogram,
+		func(ctx context.Context) ([]migrations.Info, error) {
+			return c.underlying.GetMigrationsInfo(ctx)
+		},
+	)
+}
+
+func (c *ControllerWithTraces) ListTransactions(ctx context.Context, q common.PaginatedQuery[any]) (*paginate.Cursor[ledger.Transaction], error) {
+	return tracing.TraceWithMetric(
+		ctx,
+		"ListTransactions",
+		c.tracer,
+		c.listTransactionsHistogram,
+		func(ctx context.Context) (*paginate.Cursor[ledger.Transaction], error) {
+			return c.underlying.ListTransactions(ctx, q)
+		},
+	)
+}
+
+func (c *ControllerWithTraces) CountTransactions(ctx context.Context, q common.ResourceQuery[any]) (int, error) {
+	return tracing.TraceWithMetric(
+		ctx,
+		"CountTransactions",
+		c.tracer,
+		c.countTransactionsHistogram,
+		func(ctx context.Context) (int, error) {
+			return c.underlying.CountTransactions(ctx, q)
+		},
+	)
+}
+
+func (c *ControllerWithTraces) GetTransaction(ctx context.Context, query common.ResourceQuery[any]) (*ledger.Transaction, error) {
+	return tracing.TraceWithMetric(
+		ctx,
+		"GetTransaction",
+		c.tracer,
+		c.getTransactionHistogram,
+		func(ctx context.Context) (*ledger.Transaction, error) {
+			return c.underlying.GetTransaction(ctx, query)
+		},
+	)
+}
+
+func (c *ControllerWithTraces) CountAccounts(ctx context.Context, a common.ResourceQuery[any]) (int, error) {
+	return tracing.TraceWithMetric(
+		ctx,
+		"CountAccounts",
+		c.tracer,
+		c.countAccountsHistogram,
+		func(ctx context.Context) (int, error) {
+			return c.underlying.CountAccounts(ctx, a)
+		},
+	)
+}
+
+func (c *ControllerWithTraces) ListAccounts(ctx context.Context, a common.PaginatedQuery[any]) (*paginate.Cursor[ledger.Account], error) {
+	return tracing.TraceWithMetric(
+		ctx,
+		"ListAccounts",
+		c.tracer,
+		c.listAccountsHistogram,
+		func(ctx context.Context) (*paginate.Cursor[ledger.Account], error) {
+			return c.underlying.ListAccounts(ctx, a)
+		},
+	)
+}
+
+func (c *ControllerWithTraces) GetAccount(ctx context.Context, q common.ResourceQuery[any]) (*ledger.Account, error) {
+	return tracing.TraceWithMetric(
+		ctx,
+		"GetAccount",
+		c.tracer,
+		c.getAccountHistogram,
+		func(ctx context.Context) (*ledger.Account, error) {
+			return c.underlying.GetAccount(ctx, q)
+		},
+	)
+}
+
+func (c *ControllerWithTraces) GetAggregatedBalances(ctx context.Context, q common.ResourceQuery[ledger.GetAggregatedVolumesOptions]) (ledger.BalancesByAssets, error) {
+	return tracing.TraceWithMetric(
+		ctx,
+		"GetAggregatedBalances",
+		c.tracer,
+		c.getAggregatedBalancesHistogram,
+		func(ctx context.Context) (ledger.BalancesByAssets, error) {
+			return c.underlying.GetAggregatedBalances(ctx, q)
+		},
+	)
+}
+
+func (c *ControllerWithTraces) ListLogs(ctx context.Context, q common.PaginatedQuery[any]) (*paginate.Cursor[ledger.Log], error) {
+	return tracing.TraceWithMetric(
+		ctx,
+		"ListLogs",
+		c.tracer,
+		c.listLogsHistogram,
+		func(ctx context.Context) (*paginate.Cursor[ledger.Log], error) {
+			return c.underlying.ListLogs(ctx, q)
+		},
+	)
+}
+
+func (c *ControllerWithTraces) Import(ctx context.Context, stream chan ledger.Log) error {
+	return tracing.SkipResult(tracing.TraceWithMetric(
+		ctx,
+		"Import",
+		c.tracer,
+		c.importHistogram,
+		tracing.NoResult(func(ctx context.Context) error {
+			return c.underlying.Import(ctx, stream)
+		}),
+	))
+}
+
+func (c *ControllerWithTraces) Export(ctx context.Context, w ExportWriter) error {
+	return tracing.SkipResult(tracing.TraceWithMetric(
+		ctx,
+		"Export",
+		c.tracer,
+		c.exportHistogram,
+		tracing.NoResult(func(ctx context.Context) error {
+			return c.underlying.Export(ctx, w)
+		}),
+	))
+}
+
+func (c *ControllerWithTraces) IsDatabaseUpToDate(ctx context.Context) (bool, error) {
+	return tracing.TraceWithMetric(
+		ctx,
+		"IsDatabaseUpToDate",
+		c.tracer,
+		c.isDatabaseUpToDateHistogram,
+		func(ctx context.Context) (bool, error) {
+			return c.underlying.IsDatabaseUpToDate(ctx)
+		},
+	)
+}
+
+func (c *ControllerWithTraces) GetVolumesWithBalances(ctx context.Context, q common.PaginatedQuery[ledger.GetVolumesOptions]) (*paginate.Cursor[ledger.VolumesWithBalanceByAssetByAccount], error) {
+	return tracing.TraceWithMetric(
+		ctx,
+		"GetVolumesWithBalances",
+		c.tracer,
+		c.getVolumesWithBalancesHistogram,
+		func(ctx context.Context) (*paginate.Cursor[ledger.VolumesWithBalanceByAssetByAccount], error) {
+			return c.underlying.GetVolumesWithBalances(ctx, q)
+		},
+	)
+}
+
+func (c *ControllerWithTraces) CreateTransaction(ctx context.Context, parameters Parameters[CreateTransaction]) (*ledger.Log, *ledger.CreatedTransaction, bool, error) {
+	var (
+		createdTransaction *ledger.CreatedTransaction
+		log                *ledger.Log
+		err                error
+		idempotencyHit     bool
+	)
+	_, err = tracing.TraceWithMetric(
+		ctx,
+		"CreateTransaction",
+		c.tracer,
+		c.createTransactionHistogram,
+		func(ctx context.Context) (any, error) {
+			log, createdTransaction, idempotencyHit, err = c.underlying.CreateTransaction(ctx, parameters)
+			return nil, err
+		},
+	)
+	if err != nil {
+		return nil, nil, false, err
+	}
+
+	return log, createdTransaction, idempotencyHit, nil
+}
+
+func (c *ControllerWithTraces) RevertTransaction(ctx context.Context, parameters Parameters[RevertTransaction]) (*ledger.Log, *ledger.RevertedTransaction, bool, error) {
+	var (
+		revertedTransaction *ledger.RevertedTransaction
+		log                 *ledger.Log
+		err                 error
+		idempotencyHit      bool
+	)
+	_, err = tracing.TraceWithMetric(
+		ctx,
+		"RevertTransaction",
+		c.tracer,
+		c.revertTransactionHistogram,
+		func(ctx context.Context) (any, error) {
+			log, revertedTransaction, idempotencyHit, err = c.underlying.RevertTransaction(ctx, parameters)
+			return nil, err
+		},
+	)
+	if err != nil {
+		return nil, nil, false, err
+	}
+
+	return log, revertedTransaction, idempotencyHit, nil
+}
+
+func (c *ControllerWithTraces) SaveTransactionMetadata(ctx context.Context, parameters Parameters[SaveTransactionMetadata]) (*ledger.Log, bool, error) {
+	var (
+		idempotencyHit bool
+		err            error
+		log            *ledger.Log
+	)
+	_, err = tracing.TraceWithMetric(
+		ctx,
+		"SaveTransactionMetadata",
+		c.tracer,
+		c.saveTransactionMetadataHistogram,
+		func(ctx context.Context) (*ledger.Log, error) {
+			log, idempotencyHit, err = c.underlying.SaveTransactionMetadata(ctx, parameters)
+			return nil, err
+		},
+	)
+	if err != nil {
+		return nil, false, err
+	}
+	return log, idempotencyHit, nil
+}
+
+func (c *ControllerWithTraces) SaveAccountMetadata(ctx context.Context, parameters Parameters[SaveAccountMetadata]) (*ledger.Log, bool, error) {
+	var (
+		idempotencyHit bool
+		err            error
+		log            *ledger.Log
+	)
+	_, err = tracing.TraceWithMetric(
+		ctx,
+		"SaveAccountMetadata",
+		c.tracer,
+		c.saveAccountMetadataHistogram,
+		func(ctx context.Context) (*ledger.Log, error) {
+			log, idempotencyHit, err = c.underlying.SaveAccountMetadata(ctx, parameters)
+			return nil, err
+		},
+	)
+	if err != nil {
+		return nil, false, err
+	}
+
+	return log, idempotencyHit, nil
+}
+
+func (c *ControllerWithTraces) DeleteTransactionMetadata(ctx context.Context, parameters Parameters[DeleteTransactionMetadata]) (*ledger.Log, bool, error) {
+	var (
+		idempotencyHit bool
+		err            error
+		log            *ledger.Log
+	)
+	_, err = tracing.TraceWithMetric(
+		ctx,
+		"DeleteTransactionMetadata",
+		c.tracer,
+		c.deleteTransactionMetadataHistogram,
+		func(ctx context.Context) (*ledger.Log, error) {
+			log, idempotencyHit, err = c.underlying.DeleteTransactionMetadata(ctx, parameters)
+			return nil, err
+		},
+	)
+	if err != nil {
+		return nil, false, err
+	}
+
+	return log, idempotencyHit, nil
+}
+
+func (c *ControllerWithTraces) DeleteAccountMetadata(ctx context.Context, parameters Parameters[DeleteAccountMetadata]) (*ledger.Log, bool, error) {
+	var (
+		idempotencyHit bool
+		err            error
+		log            *ledger.Log
+	)
+	_, err = tracing.TraceWithMetric(
+		ctx,
+		"DeleteAccountMetadata",
+		c.tracer,
+		c.deleteAccountMetadataHistogram,
+		func(ctx context.Context) (*ledger.Log, error) {
+			log, idempotencyHit, err = c.underlying.DeleteAccountMetadata(ctx, parameters)
+			return nil, err
+		},
+	)
+	if err != nil {
+		return nil, false, err
+	}
+
+	return log, idempotencyHit, nil
+}
+
+func (c *ControllerWithTraces) InsertSchema(ctx context.Context, parameters Parameters[InsertSchema]) (*ledger.Log, *ledger.InsertedSchema, bool, error) {
+	var (
+		insertedSchema *ledger.InsertedSchema
+		log            *ledger.Log
+		idempotencyHit bool
+		err            error
+	)
+	_, err = tracing.TraceWithMetric(
+		ctx,
+		"InsertSchema",
+		c.tracer,
+		c.insertSchemaHistogram,
+		func(ctx context.Context) (any, error) {
+			log, insertedSchema, idempotencyHit, err = c.underlying.InsertSchema(ctx, parameters)
+			return nil, err
+		},
+	)
+	if err != nil {
+		return nil, nil, false, err
+	}
+
+	return log, insertedSchema, idempotencyHit, nil
+}
+
+func (c *ControllerWithTraces) GetSchema(ctx context.Context, version string) (*ledger.Schema, error) {
+	var (
+		schema *ledger.Schema
+		err    error
+	)
+	_, err = tracing.TraceWithMetric(
+		ctx,
+		"GetSchema",
+		c.tracer,
+		c.getSchemaHistogram,
+		func(ctx context.Context) (any, error) {
+			schema, err = c.underlying.GetSchema(ctx, version)
+			return nil, err
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return schema, nil
+}
+
+func (c *ControllerWithTraces) ListSchemas(ctx context.Context, query common.PaginatedQuery[any]) (*paginate.Cursor[ledger.Schema], error) {
+	var (
+		schemas *paginate.Cursor[ledger.Schema]
+		err     error
+	)
+	_, err = tracing.TraceWithMetric(
+		ctx,
+		"ListSchemas",
+		c.tracer,
+		c.listSchemasHistogram,
+		func(ctx context.Context) (any, error) {
+			schemas, err = c.underlying.ListSchemas(ctx, query)
+			return nil, err
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return schemas, nil
+}
+
+func (c *ControllerWithTraces) RunQuery(ctx context.Context, schemaVersion string, id string, query common.RunQuery, paginationConfig common.PaginationConfig) (*queries.ResourceKind, *paginate.Cursor[any], error) {
+	var (
+		resource *queries.ResourceKind
+		cursor   *paginate.Cursor[any]
+		err      error
+	)
+	_, err = tracing.TraceWithMetric(
+		ctx,
+		"RunQuery",
+		c.tracer,
+		c.runQueryHistogram,
+		func(ctx context.Context) (any, error) {
+			resource, cursor, err = c.underlying.RunQuery(ctx, schemaVersion, id, query, paginationConfig)
+			return nil, err
+		},
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return resource, cursor, nil
+}
+
+func (c *ControllerWithTraces) GetStats(ctx context.Context) (Stats, error) {
+	return tracing.TraceWithMetric(
+		ctx,
+		"GetStats",
+		c.tracer,
+		c.getStatsHistogram,
+		func(ctx context.Context) (Stats, error) {
+			return c.underlying.GetStats(ctx)
+		},
+	)
+}
+
+func (c *ControllerWithTraces) LockLedger(ctx context.Context) (Controller, bun.IDB, func() error, error) {
+	var (
+		controller Controller
+		release    func() error
+		conn       bun.IDB
+		err        error
+	)
+	_, err = tracing.TraceWithMetric(
+		ctx,
+		"LockLedger",
+		c.tracer,
+		c.lockLedgerHistogram,
+		func(ctx context.Context) (any, error) {
+			controller, conn, release, err = c.underlying.LockLedger(ctx)
+			return nil, err
+		},
+	)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	cp := *c
+	cp.underlying = controller
+
+	return &cp, conn, release, nil
+}
+
+var _ Controller = (*ControllerWithTraces)(nil)

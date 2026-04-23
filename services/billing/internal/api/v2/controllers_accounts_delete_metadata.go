@@ -1,0 +1,40 @@
+package v2
+
+import (
+	"net/http"
+	"net/url"
+
+	"github.com/go-chi/chi/v5"
+
+	"github.com/formancehq/go-libs/v5/pkg/transport/api"
+
+	"github.com/formancehq/ledger/internal/api/common"
+	"github.com/formancehq/ledger/internal/controller/ledger"
+)
+
+func deleteAccountMetadata(w http.ResponseWriter, r *http.Request) {
+	address, err := url.PathUnescape(chi.URLParam(r, "address"))
+	if err != nil {
+		api.BadRequestWithDetails(w, common.ErrValidation, err, err.Error())
+		return
+	}
+
+	_, idempotencyHit, err := common.LedgerFromContext(r.Context()).
+		DeleteAccountMetadata(
+			r.Context(),
+			getCommandParameters(r, ledger.DeleteAccountMetadata{
+				Address: address,
+				Key:     chi.URLParam(r, "key"),
+			}),
+		)
+	if err != nil {
+
+		common.HandleCommonWriteErrors(w, r, err)
+		return
+	}
+	if idempotencyHit {
+		w.Header().Set("Idempotency-Hit", "true")
+	}
+
+	api.NoContent(w)
+}

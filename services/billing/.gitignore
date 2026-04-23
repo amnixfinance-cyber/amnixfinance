@@ -1,0 +1,13 @@
+cover.out
+go.work*
+*.jar
+node_modules
+dist
+vendor
+worktrees
+dumps
+.env
+!.envrc
+.envrc.*
+Pulumi.*.yaml
+coverage.txt
