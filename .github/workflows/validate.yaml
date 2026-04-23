@@ -65,6 +65,7 @@ jobs:
           helm repo add processing https://risingwavelabs.github.io/helm-charts
           helm repo add realtime https://centrifugal.github.io/helm-charts
           helm repo add search https://weaviate.github.io/weaviate-helm
+          helm repo add notifications https://fluxcd-community.github.io/helm-charts
           helm repo update
 
       - name: Validate Helm charts exist
@@ -102,6 +103,7 @@ jobs:
           helm search repo processing/risingwave
           helm search repo realtime/centrifugo
           helm search repo search/weaviate
+          helm search repo notifications/notification-controller
 
   trivy-scan:
     name: Security Scan
