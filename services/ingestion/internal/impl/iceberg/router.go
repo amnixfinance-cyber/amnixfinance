@@ -1,0 +1,570 @@
+// Copyright 2025 Redpanda Data, Inc.
+//
+// Licensed as a Redpanda Enterprise file under the Redpanda Community
+// License (the "License"); you may not use this file except in compliance with
+// the License. You may obtain a copy of the License at
+//
+// https://github.com/redpanda-data/redpanda/blob/master/licenses/rcl.md
+
+package iceberg
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"sync"
+
+	"github.com/apache/iceberg-go"
+	"github.com/apache/iceberg-go/catalog"
+	"github.com/apache/iceberg-go/table"
+
+	"github.com/redpanda-data/benthos/v4/public/bloblang"
+	"github.com/redpanda-data/benthos/v4/public/service"
+	"github.com/redpanda-data/connect/v4/internal/impl/iceberg/catalogx"
+	"github.com/redpanda-data/connect/v4/internal/impl/iceberg/icebergx"
+	"github.com/redpanda-data/connect/v4/internal/impl/iceberg/shredder"
+)
+
+// tableKey uniquely identifies an Iceberg table.
+type tableKey struct {
+	namespace string // dot-separated namespace
+	table     string
+}
+
+// SchemaEvolutionConfig holds configuration for automatic table creation and schema evolution.
+type SchemaEvolutionConfig struct {
+	// Enabled controls whether auto-creation and schema evolution are active.
+	Enabled bool
+	// PartitionSpec is an interpolated string that produces a partition spec expression
+	// when evaluated against the first message (e.g., "(year(ts), bucket(16, id))").
+	PartitionSpec *service.InterpolatedString
+	// TableLocation is a prefix used to derive table locations when the catalog
+	// does not automatically assign them (e.g., AWS Glue). When set, new table
+	// locations are derived as {prefix}{namespace}/{table}.
+	TableLocation string
+	// SchemaMetadata is the name of a message metadata field containing a schema.Common
+	// definition for determining column types during schema evolution.
+	SchemaMetadata string
+	// NewColumnTypeMapping is an optional Bloblang mapping that can override inferred
+	// or schema-metadata-derived column types during schema evolution.
+	NewColumnTypeMapping *bloblang.Executor
+}
+
+const maxSchemaEvolutionRetries = 10
+
+// tableEntry holds a writer and its associated lock for a single table.
+// The RWMutex allows concurrent writes (RLock) while serializing
+// schema evolution operations (Lock).
+type tableEntry struct {
+	mu     sync.RWMutex
+	writer *writer
+}
+
+// Router routes message batches to per-table writers.
+type Router struct {
+	catalogCfg   catalogx.Config
+	namespaceStr *service.InterpolatedString
+	tableStr     *service.InterpolatedString
+	schemaEvoCfg SchemaEvolutionConfig
+	commitCfg    CommitConfig
+	resolver     *typeResolver
+
+	entries sync.Map // tableKey -> *tableEntry
+
+	logger *service.Logger
+}
+
+// NewRouter creates a new router.
+func NewRouter(
+	catalogCfg catalogx.Config,
+	namespaceStr *service.InterpolatedString,
+	tableStr *service.InterpolatedString,
+	schemaEvoCfg SchemaEvolutionConfig,
+	commitCfg CommitConfig,
+	logger *service.Logger,
+) *Router {
+	return &Router{
+		catalogCfg:   catalogCfg,
+		namespaceStr: namespaceStr,
+		tableStr:     tableStr,
+		schemaEvoCfg: schemaEvoCfg,
+		commitCfg:    commitCfg,
+		resolver:     newTypeResolver(schemaEvoCfg.SchemaMetadata, schemaEvoCfg.NewColumnTypeMapping, logger),
+		logger:       logger,
+	}
+}
+
+// getOrCreateEntry returns the entry for a table, creating one if needed.
+func (r *Router) getOrCreateEntry(key tableKey) *tableEntry {
+	if v, ok := r.entries.Load(key); ok {
+		return v.(*tableEntry)
+	}
+	entry := &tableEntry{}
+	actual, _ := r.entries.LoadOrStore(key, entry)
+	return actual.(*tableEntry)
+}
+
+// Route routes a batch of messages to the appropriate writers.
+func (r *Router) Route(ctx context.Context, batch service.MessageBatch) error {
+	// fast path if static namespace + table is used.
+	if ns, ok := r.namespaceStr.Static(); ok {
+		if tbl, ok := r.tableStr.Static(); ok {
+			key := tableKey{namespace: ns, table: tbl}
+			return r.writeWithRetry(ctx, key, batch)
+		}
+	}
+
+	// Group messages by table key
+	groups := make(map[tableKey]service.MessageBatch)
+
+	nsExec := batch.InterpolationExecutor(r.namespaceStr)
+	tableExec := batch.InterpolationExecutor(r.tableStr)
+	for i, msg := range batch {
+		ns, err := nsExec.TryString(i)
+		if err != nil {
+			return fmt.Errorf("interpolating namespace: %w", err)
+		}
+
+		tbl, err := tableExec.TryString(i)
+		if err != nil {
+			return fmt.Errorf("interpolating table: %w", err)
+		}
+
+		key := tableKey{namespace: ns, table: tbl}
+		groups[key] = append(groups[key], msg)
+	}
+
+	// Write each group to its writer with retry loop
+	for key, groupBatch := range groups {
+		if err := r.writeWithRetry(ctx, key, groupBatch); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// writeWithRetry writes a batch to a table with retry loop for schema evolution.
+// On any failure the writer is always closed so the next attempt reloads the table.
+// Every error gets at least one retry; schema evolution errors get up to maxSchemaEvolutionRetries.
+func (r *Router) writeWithRetry(ctx context.Context, key tableKey, batch service.MessageBatch) error {
+	entry := r.getOrCreateEntry(key)
+
+	for i := range maxSchemaEvolutionRetries {
+		err := r.doWrite(ctx, key, entry, batch)
+		if err == nil {
+			return nil
+		}
+
+		// Always close the writer on failure so the next attempt gets a fresh table.
+		entry.mu.Lock()
+		r.closeWriter(entry)
+		entry.mu.Unlock()
+
+		// When schema evolution is enabled, perform recovery actions for known errors.
+		if r.schemaEvoCfg.Enabled {
+			if errors.Is(err, catalog.ErrNoSuchNamespace) {
+				if nsErr := r.createNamespace(ctx, key, entry); nsErr != nil {
+					return fmt.Errorf("creating namespace %s: %w", key.namespace, nsErr)
+				}
+				continue
+			}
+
+			if errors.Is(err, catalog.ErrNoSuchTable) {
+				createErr := r.createTable(ctx, key, batch, entry)
+				if createErr != nil {
+					if errors.Is(createErr, catalog.ErrNoSuchNamespace) {
+						if nsErr := r.createNamespace(ctx, key, entry); nsErr != nil {
+							return fmt.Errorf("creating namespace %s: %w", key.namespace, nsErr)
+						}
+					} else {
+						return fmt.Errorf("creating table %s.%s: %w", key.namespace, key.table, createErr)
+					}
+				}
+				continue
+			}
+
+			var schemaErr *BatchSchemaEvolutionError
+			if errors.As(err, &schemaErr) {
+				if evolveErr := r.evolveSchema(ctx, key, schemaErr, batch, entry); evolveErr != nil {
+					return fmt.Errorf("evolving schema for %s.%s: %w", key.namespace, key.table, evolveErr)
+				}
+				continue
+			}
+
+			var reqNullErr *shredder.RequiredFieldNullError
+			if errors.As(err, &reqNullErr) {
+				if optErr := r.makeColumnOptional(ctx, key, reqNullErr, entry); optErr != nil {
+					return fmt.Errorf("making column optional for %s.%s: %w", key.namespace, key.table, optErr)
+				}
+				continue
+			}
+		}
+
+		// For all other errors (including stale schema, auth errors, or when schema
+		// evolution is disabled): the writer is already closed. Always retry at least
+		// once so the fresh writer can recover from transient failures.
+		if i == 0 {
+			r.logger.Debugf("Write failed for %s.%s, retrying with fresh writer: %v", key.namespace, key.table, err)
+			continue
+		}
+		return fmt.Errorf("writing to %s.%s: %w", key.namespace, key.table, err)
+	}
+
+	return fmt.Errorf("writing to %s.%s: exhausted %d retries", key.namespace, key.table, maxSchemaEvolutionRetries)
+}
+
+// doWrite performs a single write attempt, creating the writer if needed.
+func (r *Router) doWrite(ctx context.Context, key tableKey, entry *tableEntry, batch service.MessageBatch) error {
+	for {
+		// Fast path: writer exists, use RLock for concurrent writes
+		entry.mu.RLock()
+		w := entry.writer
+		if w != nil {
+			err := w.Write(ctx, batch)
+			entry.mu.RUnlock()
+			return err
+		}
+		entry.mu.RUnlock()
+
+		// Slow path: create writer under exclusive lock
+		entry.mu.Lock()
+		if entry.writer != nil {
+			// Another goroutine created it, retry with RLock
+			entry.mu.Unlock()
+			continue
+		}
+		w, err := r.createWriter(ctx, key)
+		if err != nil {
+			entry.mu.Unlock()
+			return err
+		}
+		entry.writer = w
+		entry.mu.Unlock()
+		// Loop back to write with RLock
+	}
+}
+
+// createNamespace creates the namespace for a table.
+func (r *Router) createNamespace(ctx context.Context, key tableKey, entry *tableEntry) error {
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+
+	nsParts := strings.Split(key.namespace, ".")
+	client, err := catalogx.NewCatalogClient(ctx, r.catalogCfg, nsParts)
+	if err != nil {
+		return fmt.Errorf("creating catalog client: %w", err)
+	}
+	defer client.Close()
+
+	// Check if namespace already exists (race protection)
+	exists, err := client.CheckNamespaceExists(ctx)
+	if err != nil {
+		return fmt.Errorf("checking namespace existence: %w", err)
+	}
+	if exists {
+		r.logger.Debugf("Namespace %s already exists (created by another process)", key.namespace)
+		return nil
+	}
+
+	// Create the namespace
+	if err := client.CreateNamespace(ctx, nil); err != nil {
+		return err
+	}
+
+	r.logger.Infof("Created namespace: %s", key.namespace)
+	return nil
+}
+
+// createTable creates a new table with schema inferred from the first message.
+func (r *Router) createTable(ctx context.Context, key tableKey, batch service.MessageBatch, entry *tableEntry) error {
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+
+	nsParts := strings.Split(key.namespace, ".")
+	client, err := catalogx.NewCatalogClient(ctx, r.catalogCfg, nsParts)
+	if err != nil {
+		return fmt.Errorf("creating catalog client: %w", err)
+	}
+	defer client.Close()
+
+	// Check if table already exists (race protection)
+	exists, err := client.CheckTableExists(ctx, key.table)
+	if err != nil {
+		return fmt.Errorf("checking table existence: %w", err)
+	}
+	if exists {
+		r.logger.Debugf("Table %s.%s already exists (created by another process)", key.namespace, key.table)
+		// Invalidate cached writer so it gets recreated with the new table
+		r.closeWriter(entry)
+		return nil
+	}
+
+	// Get first message to infer schema
+	if len(batch) == 0 {
+		return errors.New("cannot create table from empty batch")
+	}
+
+	firstMsg := batch[0]
+	structured, err := firstMsg.AsStructured()
+	if err != nil {
+		return fmt.Errorf("parsing first message: %w", err)
+	}
+
+	record, ok := structured.(map[string]any)
+	if !ok {
+		return fmt.Errorf("first message is not an object, got %T", structured)
+	}
+
+	// Build schema from record using the type resolver
+	schema, err := r.buildSchemaWithResolver(record, firstMsg, key)
+	if err != nil {
+		return fmt.Errorf("building schema from record: %w", err)
+	}
+
+	// Parse partition spec if configured
+	var partitionSpec *iceberg.PartitionSpec
+	if r.schemaEvoCfg.PartitionSpec != nil {
+		specStr, err := batch.TryInterpolatedString(0, r.schemaEvoCfg.PartitionSpec)
+		if err != nil {
+			return fmt.Errorf("interpolating partition spec: %w", err)
+		}
+		if specStr != "" {
+			spec, err := icebergx.ParsePartitionSpec(specStr, schema)
+			if err != nil {
+				return fmt.Errorf("parsing partition spec %q: %w", specStr, err)
+			}
+			partitionSpec = &spec
+		}
+	}
+
+	// Build create table options
+	var createOpts []catalog.CreateTableOpt
+	if partitionSpec != nil {
+		createOpts = append(createOpts, catalog.WithPartitionSpec(partitionSpec))
+	}
+	if r.schemaEvoCfg.TableLocation != "" {
+		location := r.schemaEvoCfg.TableLocation + strings.Join(nsParts, "/") + "/" + key.table
+		createOpts = append(createOpts, catalog.WithLocation(location))
+	}
+
+	// Create the table
+	_, err = client.CreateTable(ctx, key.table, schema, createOpts...)
+	if err != nil {
+		// Check if table was created by another process
+		if errors.Is(err, catalog.ErrTableAlreadyExists) {
+			r.logger.Debugf("Table %s.%s already exists (created by another process)", key.namespace, key.table)
+			r.closeWriter(entry)
+			return nil
+		}
+		return err
+	}
+
+	r.logger.Infof("Created table: %s.%s with %d columns", key.namespace, key.table, len(schema.Fields()))
+	// Invalidate cached writer so it gets recreated with the new table
+	r.closeWriter(entry)
+	return nil
+}
+
+// buildSchemaWithResolver builds a schema using the type resolver for type resolution.
+func (r *Router) buildSchemaWithResolver(record map[string]any, msg *service.Message, key tableKey) (*iceberg.Schema, error) {
+	ti := newTypeInferrer()
+	fields := make([]iceberg.NestedField, 0, len(record))
+
+	for name, value := range record {
+		fieldType, err := r.resolver.resolveTypeForCreateTable(name, value, msg, key.namespace, key.table)
+		if err != nil {
+			return nil, fmt.Errorf("resolving type for field %q: %w", name, err)
+		}
+		if fieldType == nil {
+			continue // nil value, skip
+		}
+		fields = append(fields, iceberg.NestedField{
+			ID:       ti.allocateFieldID(),
+			Name:     name,
+			Type:     fieldType,
+			Required: false,
+		})
+	}
+
+	return iceberg.NewSchema(0, fields...), nil
+}
+
+// evolveSchema adds new columns to the table.
+func (r *Router) evolveSchema(ctx context.Context, key tableKey, schemaErr *BatchSchemaEvolutionError, batch service.MessageBatch, entry *tableEntry) error {
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+
+	nsParts := strings.Split(key.namespace, ".")
+	client, err := catalogx.NewCatalogClient(ctx, r.catalogCfg, nsParts)
+	if err != nil {
+		return fmt.Errorf("creating catalog client: %w", err)
+	}
+	defer client.Close()
+
+	// Load current table
+	tbl, err := client.LoadTable(ctx, key.table)
+	if err != nil {
+		return fmt.Errorf("loading table: %w", err)
+	}
+
+	// Group new fields by parent path for efficient updates
+	groups := schemaErr.GroupByParentPath()
+
+	// Update schema with new columns
+	added := 0
+	_, err = client.UpdateSchema(ctx, tbl, func(us *table.UpdateSchema) {
+		for _, fields := range groups {
+			for _, field := range fields {
+				// Resolve type using the three-stage pipeline
+				fieldType, err := r.resolver.resolveTypeForAddColumn(field, batch[0], key.namespace, key.table)
+				if err != nil {
+					r.logger.Warnf("Failed to resolve type for field %q: %v, using string", field.FieldName(), err)
+					fieldType = iceberg.StringType{}
+				}
+
+				// Build column path
+				path := field.FullPath()
+				colPath := make([]string, len(path))
+				for i, seg := range path {
+					colPath[i] = seg.Name
+				}
+
+				// Add column (all new columns are optional)
+				us.AddColumn(colPath, fieldType, "", false, nil)
+				added++
+			}
+		}
+	})
+	if err != nil {
+		return fmt.Errorf("updating schema: %w", err)
+	}
+
+	r.logger.Infof("Evolved schema for %s.%s: added %d columns", key.namespace, key.table, added)
+
+	// Invalidate cached writer so it gets recreated with the new schema
+	r.closeWriter(entry)
+	return nil
+}
+
+// makeColumnOptional changes a required column to optional in the table schema.
+func (r *Router) makeColumnOptional(ctx context.Context, key tableKey, reqNullErr *shredder.RequiredFieldNullError, entry *tableEntry) error {
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+
+	nsParts := strings.Split(key.namespace, ".")
+	client, err := catalogx.NewCatalogClient(ctx, r.catalogCfg, nsParts)
+	if err != nil {
+		return fmt.Errorf("creating catalog client: %w", err)
+	}
+	defer client.Close()
+
+	// Load current table
+	tbl, err := client.LoadTable(ctx, key.table)
+	if err != nil {
+		return fmt.Errorf("loading table: %w", err)
+	}
+
+	// Build column path from the error's path + field name.
+	// Only include PathField segments - skip PathListElement/PathMapEntry
+	// which don't correspond to named columns in the schema.
+	colPath := make([]string, 0, len(reqNullErr.Path)+1)
+	for _, seg := range reqNullErr.Path {
+		if seg.Kind == icebergx.PathField {
+			colPath = append(colPath, seg.Name)
+		}
+	}
+	colPath = append(colPath, reqNullErr.Field.Name)
+
+	// Update schema to make the column optional
+	_, err = client.UpdateSchema(ctx, tbl, func(us *table.UpdateSchema) {
+		us.UpdateColumn(colPath, table.ColumnUpdate{
+			Required: iceberg.Optional[bool]{Val: false, Valid: true},
+		})
+	})
+	if err != nil {
+		return fmt.Errorf("updating schema: %w", err)
+	}
+
+	r.logger.Infof("Made column %q optional for %s.%s", reqNullErr.Field.Name, key.namespace, key.table)
+
+	// Invalidate cached writer so it gets recreated with the new schema
+	r.closeWriter(entry)
+	return nil
+}
+
+// closeWriter closes and nils the writer in an entry.
+// Caller must hold entry.mu.Lock().
+func (*Router) closeWriter(entry *tableEntry) {
+	if entry.writer != nil {
+		entry.writer.Close()
+		entry.writer = nil
+	}
+}
+
+// createWriter creates a new writer for a table.
+// Caller must ensure this is only called when entry.writer is nil.
+func (r *Router) createWriter(ctx context.Context, key tableKey) (*writer, error) {
+	// Parse namespace into parts
+	nsParts := strings.Split(key.namespace, ".")
+
+	// Create catalog client for this namespace
+	client, err := catalogx.NewCatalogClient(ctx, r.catalogCfg, nsParts)
+	if err != nil {
+		return nil, fmt.Errorf("creating catalog client: %w", err)
+	}
+	defer client.Close()
+
+	// Load the table twice - writer and committer need separate references
+	// since the table object is mutable and they operate in different goroutines
+	writerTbl, err := client.LoadTable(ctx, key.table)
+	if err != nil {
+		// Return the error directly - the retry loop will handle it
+		return nil, err
+	}
+
+	committerTbl, err := client.LoadTable(ctx, key.table)
+	if err != nil {
+		return nil, err
+	}
+
+	// reloadTable creates a fresh catalog client and reloads the table,
+	// allowing the committer to recover from stale metadata or auth errors.
+	reloadTable := func(ctx context.Context) (*table.Table, error) {
+		rc, err := catalogx.NewCatalogClient(ctx, r.catalogCfg, nsParts)
+		if err != nil {
+			return nil, fmt.Errorf("creating catalog client for table reload: %w", err)
+		}
+		defer rc.Close()
+		return rc.LoadTable(ctx, key.table)
+	}
+
+	// Create committer with its own table reference
+	comm, err := NewCommitter(committerTbl, r.commitCfg, reloadTable, r.logger)
+	if err != nil {
+		return nil, fmt.Errorf("creating committer: %w", err)
+	}
+
+	// Create writer with its own table reference and the committer
+	w := NewWriter(writerTbl, comm, r.logger)
+	r.logger.Debugf("Created writer for table %s.%s", key.namespace, key.table)
+
+	return w, nil
+}
+
+// Close closes all cached writers.
+func (r *Router) Close() {
+	r.entries.Range(func(k, v any) bool {
+		key := k.(tableKey)
+		entry := v.(*tableEntry)
+		entry.mu.Lock()
+		if entry.writer != nil {
+			entry.writer.Close()
+			entry.writer = nil
+			r.logger.Debugf("Closed writer for table %s.%s", key.namespace, key.table)
+		}
+		entry.mu.Unlock()
+		return true
+	})
+}

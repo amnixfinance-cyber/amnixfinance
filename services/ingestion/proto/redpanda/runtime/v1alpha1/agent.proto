@@ -1,0 +1,58 @@
+// Copyright 2025 Redpanda Data, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package redpanda.runtime.v1alpha1;
+
+option go_package = "github.com/redpanda-data/connect/v4/internal/agent/runtimepb";
+
+import "google/protobuf/timestamp.proto";
+import "redpanda/runtime/v1alpha1/message.proto";
+
+message TraceContext {
+  string trace_id = 1;
+  string span_id = 2;
+  string trace_flags = 4;
+}
+
+message Trace { repeated Span spans = 1; }
+
+message Span {
+  string span_id = 1;
+  string name = 2;
+  google.protobuf.Timestamp start_time = 3;
+  google.protobuf.Timestamp end_time = 4;
+  map<string, Value> attributes = 5;
+  repeated Span child_spans = 6;
+}
+
+// InvokeAgentRequest is the request message for the `InvokeAgent` method.
+message InvokeAgentRequest {
+  Message message = 1;
+
+  TraceContext trace_context = 2;
+}
+
+// InvokeAgentResponse is the response message for the `InvokeAgent` method.
+message InvokeAgentResponse {
+  Message message = 1;
+
+  Trace trace = 2;
+}
+
+// `AgentRuntime` is the service that provides the ability to invoke an agent.
+service AgentRuntime {
+  rpc InvokeAgent(InvokeAgentRequest) returns (InvokeAgentResponse);
+}

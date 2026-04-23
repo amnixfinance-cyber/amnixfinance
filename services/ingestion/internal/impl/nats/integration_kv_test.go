@@ -1,0 +1,387 @@
+// Copyright 2024 Redpanda Data, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package nats
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"testing"
+	"time"
+
+	"github.com/gofrs/uuid/v5"
+	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/wait"
+
+	"github.com/redpanda-data/benthos/v4/public/service"
+	"github.com/redpanda-data/benthos/v4/public/service/integration"
+)
+
+func TestIntegrationNatsKV(t *testing.T) {
+	integration.CheckSkip(t)
+
+	ctr, err := testcontainers.Run(t.Context(), "nats:latest",
+		testcontainers.WithCmd("--js", "--trace"),
+		testcontainers.WithExposedPorts("4222/tcp"),
+		testcontainers.WithWaitStrategy(
+			wait.ForListeningPort("4222/tcp").WithStartupTimeout(30*time.Second),
+		),
+	)
+	testcontainers.CleanupContainer(t, ctr)
+	require.NoError(t, err)
+
+	mp, err := ctr.MappedPort(t.Context(), "4222/tcp")
+	require.NoError(t, err)
+
+	var natsConn *nats.Conn
+	require.Eventually(t, func() bool {
+		natsConn, err = nats.Connect(fmt.Sprintf("tcp://localhost:%v", mp.Port()))
+		return err == nil
+	}, 30*time.Second, time.Second)
+	t.Cleanup(func() {
+		natsConn.Close()
+	})
+
+	template := `
+output:
+  label: kv_output
+  nats_kv:
+    urls: [ tcp://localhost:$PORT ]
+    bucket: bucket-$ID
+    # We need to make this key random as the NATS server will only deliver the
+    # latest revision of a key when it's requested by a watcher, this is by
+    # design, but if we want to test Redpanda Connect semantics like batching we should
+    # use unique keys for every message passing through the output
+    key: ${! ksuid() }
+
+input:
+  label: kv_input
+  nats_kv:
+    urls: [ tcp://localhost:$PORT ]
+    bucket: bucket-$ID
+`
+	suite := integration.StreamTests(
+		integration.StreamTestOpenClose(),
+		// integration.StreamTestMetadata(), // NATS KV doesn't support metadata
+		integration.StreamTestSendBatch(10),
+		integration.StreamTestStreamParallel(1000),
+		integration.StreamTestStreamSequential(1000),
+		integration.StreamTestStreamParallelLossy(1000),
+		integration.StreamTestStreamParallelLossyThroughReconnect(1000),
+	)
+	suite.Run(
+		t, template,
+		integration.StreamTestOptPreTest(func(t testing.TB, _ context.Context, vars *integration.StreamTestConfigVars) {
+			js, err := jetstream.New(natsConn)
+			require.NoError(t, err)
+
+			bucketName := "bucket-" + vars.ID
+
+			_, err = js.CreateKeyValue(t.Context(), jetstream.KeyValueConfig{
+				Bucket: bucketName,
+			})
+			require.NoError(t, err)
+		}),
+		integration.StreamTestOptSleepAfterInput(100*time.Millisecond),
+		integration.StreamTestOptSleepAfterOutput(100*time.Millisecond),
+		integration.StreamTestOptPort(mp.Port()),
+	)
+
+	t.Run("cache", func(t *testing.T) {
+		template := `
+cache_resources:
+  - label: testcache
+    nats_kv:
+      bucket: bucket-$ID
+      urls: [ tcp://localhost:$PORT ]`
+		suite := integration.CacheTests(
+			integration.CacheTestOpenClose(),
+			integration.CacheTestMissingKey(),
+			integration.CacheTestDoubleAdd(),
+			integration.CacheTestDelete(),
+			integration.CacheTestGetAndSet(50),
+		)
+		suite.Run(
+			t, template,
+			integration.CacheTestOptPreTest(func(t testing.TB, _ context.Context, vars *integration.CacheTestConfigVars) {
+				js, err := jetstream.New(natsConn)
+				require.NoError(t, err)
+
+				bucketName := "bucket-" + vars.ID
+
+				_, err = js.CreateKeyValue(t.Context(), jetstream.KeyValueConfig{
+					Bucket: bucketName,
+				})
+				require.NoError(t, err)
+			}),
+			integration.CacheTestOptPort(mp.Port()),
+		)
+	})
+
+	t.Run("processor", func(t *testing.T) {
+		createBucket := func(t *testing.T) (jetstream.KeyValue, string) {
+			u4, err := uuid.NewV4()
+			require.NoError(t, err)
+			js, err := jetstream.New(natsConn)
+			require.NoError(t, err)
+
+			bucketName := "bucket-" + u4.String()
+
+			bucket, err := js.CreateKeyValue(t.Context(), jetstream.KeyValueConfig{
+				Bucket:  bucketName,
+				History: 5,
+			})
+			require.NoError(t, err)
+
+			url := fmt.Sprintf("tcp://localhost:%v", mp.Port())
+
+			return bucket, url
+		}
+
+		process := func(yaml string) (service.MessageBatch, error) {
+			spec := natsKVProcessorConfig()
+			parsed, err := spec.ParseYAML(yaml, nil)
+			require.NoError(t, err)
+
+			p, err := newKVProcessor(parsed, service.MockResources())
+			require.NoError(t, err)
+
+			m := service.NewMessage([]byte("hello"))
+			return p.Process(t.Context(), m)
+		}
+
+		t.Run("get operation", func(t *testing.T) {
+			bucket, url := createBucket(t)
+			_, err := bucket.PutString(t.Context(), "blob", "lawblog")
+			require.NoError(t, err)
+
+			yaml := fmt.Sprintf(`
+        bucket: %s
+        operation: get
+        key: blob
+        urls: [%s]`, bucket.Bucket(), url)
+
+			result, err := process(yaml)
+			require.NoError(t, err)
+
+			m := result[0]
+			bytes, err := m.AsBytes()
+			require.NoError(t, err)
+			assert.Equal(t, []byte("lawblog"), bytes)
+		})
+
+		t.Run("get_revision operation", func(t *testing.T) {
+			bucket, url := createBucket(t)
+			revision, err := bucket.PutString(t.Context(), "blob", "lawblog")
+			require.NoError(t, err)
+
+			yaml := fmt.Sprintf(`
+        bucket: %s
+        operation: get_revision
+        key: blob
+        revision: %d
+        urls: [%s]`, bucket.Bucket(), revision, url)
+
+			result, err := process(yaml)
+			require.NoError(t, err)
+
+			m := result[0]
+			bytes, err := m.AsBytes()
+			require.NoError(t, err)
+			assert.Equal(t, []byte("lawblog"), bytes)
+		})
+
+		t.Run("create operation (success)", func(t *testing.T) {
+			bucket, url := createBucket(t)
+			yaml := fmt.Sprintf(`
+        bucket: %s
+        operation: create
+        key: blob
+        urls: [%s]`, bucket.Bucket(), url)
+
+			result, err := process(yaml)
+			require.NoError(t, err)
+
+			m := result[0]
+			bytes, err := m.AsBytes()
+			require.NoError(t, err)
+			assert.Equal(t, []byte("hello"), bytes)
+		})
+
+		t.Run("create operation (error)", func(t *testing.T) {
+			bucket, url := createBucket(t)
+			_, err := bucket.PutString(t.Context(), "blob", "lawblog")
+			require.NoError(t, err)
+
+			yaml := fmt.Sprintf(`
+        bucket: %s
+        operation: create
+        key: blob
+        urls: [%s]`, bucket.Bucket(), url)
+
+			_, err = process(yaml)
+			require.Error(t, err)
+		})
+
+		t.Run("put operation", func(t *testing.T) {
+			bucket, url := createBucket(t)
+			yaml := fmt.Sprintf(`
+        bucket: %s
+        operation: put
+        key: blob
+        urls: [%s]`, bucket.Bucket(), url)
+
+			result, err := process(yaml)
+			require.NoError(t, err)
+
+			m := result[0]
+			bytes, err := m.AsBytes()
+			require.NoError(t, err)
+			assert.Equal(t, []byte("hello"), bytes)
+		})
+
+		t.Run("update operation", func(t *testing.T) {
+			bucket, url := createBucket(t)
+			revision, err := bucket.PutString(t.Context(), "blob", "lawblog")
+			require.NoError(t, err)
+
+			yaml := fmt.Sprintf(`
+        bucket: %s
+        operation: update
+        key: blob
+        revision: %d
+        urls: [%s]`, bucket.Bucket(), revision, url)
+
+			result, err := process(yaml)
+			require.NoError(t, err)
+
+			m := result[0]
+			bytes, err := m.AsBytes()
+			require.NoError(t, err)
+			assert.Equal(t, []byte("hello"), bytes)
+		})
+
+		t.Run("delete operation", func(t *testing.T) {
+			bucket, url := createBucket(t)
+			_, err := bucket.PutString(t.Context(), "blob", "lawblog")
+			require.NoError(t, err)
+
+			yaml := fmt.Sprintf(`
+        bucket: %s
+        operation: delete
+        key: blob
+        urls: [%s]`, bucket.Bucket(), url)
+
+			result, err := process(yaml)
+			require.NoError(t, err)
+
+			m := result[0]
+			bytes, err := m.AsBytes()
+			require.NoError(t, err)
+			assert.Equal(t, []byte("hello"), bytes)
+
+			_, err = bucket.Get(t.Context(), "blob")
+			require.Error(t, err)
+		})
+
+		t.Run("purge operation", func(t *testing.T) {
+			bucket, url := createBucket(t)
+			_, err := bucket.PutString(t.Context(), "blob", "lawblog")
+			require.NoError(t, err)
+
+			yaml := fmt.Sprintf(`
+        bucket: %s
+        operation: purge
+        key: blob
+        urls: [%s]`, bucket.Bucket(), url)
+
+			result, err := process(yaml)
+			require.NoError(t, err)
+
+			m := result[0]
+			bytes, err := m.AsBytes()
+			require.NoError(t, err)
+			assert.Equal(t, []byte("hello"), bytes)
+
+			_, err = bucket.Get(t.Context(), "blob")
+			require.Error(t, err)
+		})
+
+		t.Run("history operation", func(t *testing.T) {
+			bucket, url := createBucket(t)
+			_, err := bucket.PutString(t.Context(), "blob", "lawblog")
+			require.NoError(t, err)
+			_, err = bucket.PutString(t.Context(), "blob", "sawedlog")
+			require.NoError(t, err)
+
+			yaml := fmt.Sprintf(`
+        bucket: %s
+        operation: history
+        key: blob
+        urls: [%s]`, bucket.Bucket(), url)
+
+			result, err := process(yaml)
+			require.NoError(t, err)
+
+			require.Len(t, result, 1)
+
+			msg, err := result[0].AsStructured()
+			require.NoError(t, err)
+			require.IsType(t, []any{}, msg)
+			records := msg.([]any)
+			require.Len(t, records, 2)
+			record := records[1]
+			require.IsType(t, map[string]any{}, record)
+			assert.Contains(t, record, "created")
+			assert.Subset(t, record, map[string]any{
+				"key":       "blob",
+				"value":     []byte("sawedlog"),
+				"bucket":    bucket.Bucket(),
+				"revision":  uint64(2),
+				"delta":     uint64(0),
+				"operation": "KeyValuePutOp",
+			})
+		})
+
+		t.Run("keys operation", func(t *testing.T) {
+			bucket, url := createBucket(t)
+			_, err := bucket.PutString(t.Context(), "blob", "lawblog")
+			require.NoError(t, err)
+			_, err = bucket.PutString(t.Context(), "bobs", "sawedlog")
+			require.NoError(t, err)
+
+			yaml := fmt.Sprintf(`
+        bucket: %s
+        operation: keys
+        key: blob
+        urls: [%s]`, bucket.Bucket(), url)
+
+			result, err := process(yaml)
+			require.NoError(t, err)
+
+			require.Len(t, result, 1)
+
+			msg, err := result[0].AsBytes()
+			require.NoError(t, err)
+			expected, err := json.Marshal([]any{"blob"})
+			require.NoError(t, err)
+			assert.JSONEq(t, string(expected), string(msg))
+		})
+	})
+}

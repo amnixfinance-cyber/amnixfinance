@@ -1,0 +1,294 @@
+// Copyright 2024 Redpanda Data, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package mongodb
+
+import (
+	"fmt"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/wait"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/redpanda-data/benthos/v4/public/service"
+	"github.com/redpanda-data/benthos/v4/public/service/integration"
+)
+
+func TestMongoInputEmptyShutdown(t *testing.T) {
+	conf := `
+url: "mongodb://localhost:27017"
+username: foouser
+password: foopass
+database: "foo"
+collection: "bar"
+query: |
+  root.from = {"$lte": timestamp_unix()}
+  root.to = {"$gte": timestamp_unix()}
+`
+
+	spec := mongoConfigSpec()
+	env := service.NewEnvironment()
+	resources := service.MockResources()
+
+	mongoConfig, err := spec.ParseYAML(conf, env)
+	require.NoError(t, err)
+
+	mongoInput, err := newMongoInput(mongoConfig, resources.Logger())
+	require.NoError(t, err)
+	require.NoError(t, mongoInput.Close(t.Context()))
+}
+
+func TestInputIntegration(t *testing.T) {
+	integration.CheckSkip(t)
+
+	ctr, err := testcontainers.Run(t.Context(), "mongo:latest",
+		testcontainers.WithExposedPorts("27017/tcp"),
+		testcontainers.WithEnv(map[string]string{
+			"MONGO_INITDB_ROOT_USERNAME": "mongoadmin",
+			"MONGO_INITDB_ROOT_PASSWORD": "secret",
+		}),
+		testcontainers.WithWaitStrategy(
+			wait.ForListeningPort("27017/tcp").WithStartupTimeout(time.Minute),
+		),
+	)
+	testcontainers.CleanupContainer(t, ctr)
+	require.NoError(t, err)
+
+	mp, err := ctr.MappedPort(t.Context(), "27017/tcp")
+	require.NoError(t, err)
+
+	var mongoClient *mongo.Client
+
+	dbName := "TestDB"
+	collName := "TestCollection"
+	require.Eventually(t, func() bool {
+		if mongoClient, err = mongo.Connect(options.Client().
+			SetConnectTimeout(10 * time.Second).
+			SetTimeout(30 * time.Second).
+			SetServerSelectionTimeout(30 * time.Second).
+			SetAuth(options.Credential{
+				Username: "mongoadmin",
+				Password: "secret",
+			}).
+			ApplyURI("mongodb://localhost:" + mp.Port())); err != nil {
+			return false
+		}
+		if err := mongoClient.Database(dbName).CreateCollection(t.Context(), collName); err != nil {
+			_ = mongoClient.Disconnect(t.Context())
+			return false
+		}
+		return true
+	}, time.Minute, time.Second)
+
+	coll := mongoClient.Database(dbName).Collection(collName)
+	sampleData := []any{
+		bson.M{
+			"name": "John",
+			"age":  15,
+		},
+		bson.M{
+			"name": "Michael",
+			"age":  34,
+		},
+		bson.M{
+			"name": "Mary",
+			"age":  34,
+		},
+		bson.M{
+			"name": "Mathews",
+			"age":  29,
+		},
+		bson.M{
+			"name": "Peter",
+			"age":  13,
+		},
+		bson.M{
+			"name": "James",
+			"age":  16,
+		},
+		bson.M{
+			"name": "Juliet",
+			"age":  53,
+		},
+	}
+
+	_, err = coll.InsertMany(t.Context(), sampleData)
+	require.NoError(t, err)
+
+	type testCase struct {
+		query           func(coll *mongo.Collection) (*mongo.Cursor, error)
+		placeholderConf string
+		jsonMarshalMode JSONMarshalMode
+	}
+	limit := int64(3)
+	cases := map[string]testCase{
+		"find": {
+			query: func(coll *mongo.Collection) (*mongo.Cursor, error) {
+				return coll.Find(t.Context(), bson.M{
+					"age": bson.M{
+						"$gte": 18,
+					},
+				}, options.Find().
+					SetSort(bson.M{"name": 1}).
+					SetLimit(limit))
+			},
+			placeholderConf: `
+url: "mongodb://localhost:%s"
+username: mongoadmin
+password: secret
+database: "TestDB"
+collection: "TestCollection"
+json_marshal_mode: relaxed
+query: |
+  root.age = {"$gte": 18}
+batchSize: 2
+sort:
+  name: 1
+limit: 3
+`,
+			jsonMarshalMode: JSONMarshalModeRelaxed,
+		},
+		"aggregate": {
+			query: func(coll *mongo.Collection) (*mongo.Cursor, error) {
+				return coll.Aggregate(t.Context(), []any{
+					bson.M{
+						"$match": bson.M{
+							"age": bson.M{
+								"$gte": 18,
+							},
+						},
+					},
+					bson.M{
+						"$sort": bson.M{
+							"name": 1,
+						},
+					},
+					bson.M{
+						"$limit": limit,
+					},
+				})
+			},
+			placeholderConf: `
+url: "mongodb://localhost:%s"
+username: mongoadmin
+password: secret
+database: "TestDB"
+collection: "TestCollection"
+operation: "aggregate"
+json_marshal_mode: canonical
+query: |
+  root = [
+    {
+      "$match": {
+        "age": {
+          "$gte": 18
+        }
+      }
+    },
+    {
+      "$sort": {
+        "name": 1
+      }
+    },
+    {
+      "$limit": 3
+    }
+  ]
+batchSize: 2
+`,
+			jsonMarshalMode: JSONMarshalModeCanonical,
+		},
+	}
+
+	port := mp.Port()
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			testInput(t, port, tc.query, tc.placeholderConf, tc.jsonMarshalMode)
+		})
+	}
+}
+
+func testInput(
+	t *testing.T,
+	port string,
+	controlQuery func(collection *mongo.Collection) (cursor *mongo.Cursor, err error),
+	placeholderConf string,
+	jsonMarshalMode JSONMarshalMode,
+) {
+	t.Helper()
+
+	controlCtx := t.Context()
+	controlConn, err := mongo.Connect(options.Client().ApplyURI("mongodb://mongoadmin:secret@localhost:" + port))
+	require.NoError(t, err)
+	controlColl := controlConn.Database("TestDB").Collection("TestCollection")
+	controlCur, err := controlQuery(controlColl)
+	require.NoError(t, err)
+	var wantResults []map[string]any
+	err = controlCur.All(controlCtx, &wantResults)
+	require.NoError(t, err)
+	var wantMsgs [][]byte
+	for _, res := range wantResults {
+		resBytes, err := bson.MarshalExtJSON(res, jsonMarshalMode == JSONMarshalModeCanonical, false)
+		require.NoError(t, err)
+		wantMsgs = append(wantMsgs, resBytes)
+	}
+
+	conf := fmt.Sprintf(placeholderConf, port)
+
+	spec := mongoConfigSpec()
+	env := service.NewEnvironment()
+	resources := service.MockResources()
+
+	mongoConfig, err := spec.ParseYAML(conf, env)
+	require.NoError(t, err)
+
+	mongoInput, err := newMongoInput(mongoConfig, resources.Logger())
+	require.NoError(t, err)
+
+	ctx := t.Context()
+	err = mongoInput.Connect(ctx)
+	require.NoError(t, err)
+
+	// read all batches
+	var actualMsgs service.MessageBatch
+	for {
+		batch, ack, err := mongoInput.ReadBatch(ctx)
+		if err == service.ErrEndOfInput {
+			break
+		}
+		require.NoError(t, err)
+		actualMsgs = append(actualMsgs, batch...)
+		require.NoError(t, ack(ctx, nil))
+	}
+
+	// compare to wanted messages
+	for i, wMsg := range wantMsgs {
+		msg := actualMsgs[i]
+		msgBytes, err := msg.AsBytes()
+		require.NoError(t, err)
+		assert.JSONEq(t, string(wMsg), string(msgBytes))
+	}
+	_, ack, err := mongoInput.ReadBatch(ctx)
+	assert.Equal(t, service.ErrEndOfInput, err)
+	require.Nil(t, ack)
+
+	require.NoError(t, mongoInput.Close(t.Context()))
+}

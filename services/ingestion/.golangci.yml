@@ -1,0 +1,152 @@
+version: "2"
+
+run:
+  timeout: 5m
+linters:
+  default: none
+  enable:
+    - modernize
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    # Extra linters:
+    # - depguard
+    # - gosec
+    # - misspell
+    # - prealloc
+    - bodyclose
+    - containedctx
+    - durationcheck
+    - gocritic # only ruleguard enabled (full gocritic is slow)
+    - mirror
+    - nolintlint
+    - perfsprint
+    - predeclared
+    - revive
+    - rowserrcheck
+    - testifylint
+    - unconvert
+    - usetesting
+    - wastedassign
+  settings:
+    errcheck:
+      exclude-functions:
+        - (*github.com/redpanda-data/benthos/v4/internal/batch.Error).Failed
+        - (*github.com/redpanda-data/benthos/v4/public/service.BatchError).Failed
+    gocritic:
+      disable-all: true
+      enabled-checks:
+        - ruleguard
+        - unlambda
+        - deprecatedComment
+      settings:
+        ruleguard:
+          failOn: dsl
+          rules: .golangci/rules.go
+    govet:
+      disable:
+        - fieldalignment
+        - deepequalerrors
+        - shadow
+      enable-all: true
+    revive:
+      enable-all-rules: false
+      rules:
+        # - name: defer
+        # - name: early-return
+        - name: exported
+        - name: get-return
+        - name: superfluous-else
+        - name: time-equal
+        - name: unnecessary-stmt
+        # - name: unchecked-type-assertion
+        - name: unused-parameter
+        - name: unused-receiver
+        - name: useless-break
+        - name: waitgroup-by-value
+    testifylint:
+      disable-all: true
+      enable:
+        - nil-compare
+        - compares
+        - error-is-as
+        - bool-compare
+        - empty
+        - len
+        - expected-actual
+        - error-nil
+  exclusions:
+    generated: lax
+    presets:
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters:
+          - bodyclose
+          - godot
+          - perfsprint
+        path: _test.go
+      - linters:
+          - perfsprint
+        path: internal/impl/gcp/enterprise/changestreams/changestreamstest
+      - linters:
+          - perfsprint
+        path: internal/impl/gcp/enterprise/changestreams/metadata
+      - linters:
+          - revive
+        text: "exported method .*\\.(Close|Connect|Read|ReadBatch|Write|WriteBatch|Process|ProcessBatch|NextBatch|Create|EndOfInput) should have comment or be unexported"
+      - linters:
+          - staticcheck
+        text: "redpandatest.StartRedpanda is deprecated: Use StartSingleBroker or StartSingleBrokerWithConfig instead"
+        path: internal/impl/kafka
+      - linters:
+          - errcheck
+        text: "Error return value of.*Write.*is not checked"
+        path: internal/impl/otlp/otlpconv/conv.go
+      - linters:
+          - staticcheck
+        text: "SA1019.*cloud.google.com/go/pubsub"
+        path: internal/impl/gcp
+      - linters:
+          - staticcheck
+        text: "SA1019.*go.opentelemetry.io/otel/exporters/jaeger"
+        path: internal/impl/jaeger
+      - linters:
+          - staticcheck
+        text: "SA1019.*option.WithCredentialsJSON"
+        path: internal/impl/gcp
+      - linters:
+          - staticcheck
+        text: "SA1019.*model.IsValidMetricName"
+        path: internal/impl/prometheus
+      - linters:
+          - staticcheck
+        text: "SA1019.*github.com/jhump/protoreflect"
+        path: internal/impl/protobuf
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  new: false
+formatters:
+  enable:
+    - goimports
+    - gofumpt
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/redpanda-data/
+    gofumpt:
+      extra-rules: false
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

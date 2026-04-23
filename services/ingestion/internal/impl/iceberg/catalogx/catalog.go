@@ -1,0 +1,333 @@
+// Copyright 2025 Redpanda Data, Inc.
+//
+// Licensed as a Redpanda Enterprise file under the Redpanda Community
+// License (the "License"); you may not use this file except in compliance with
+// the License. You may obtain a copy of the License at
+//
+// https://github.com/redpanda-data/redpanda/blob/master/licenses/rcl.md
+
+package catalogx
+
+import (
+	"context"
+	"crypto/tls"
+	"errors"
+	"fmt"
+	"net/url"
+	"strings"
+	"sync/atomic"
+
+	"github.com/apache/iceberg-go"
+	"github.com/apache/iceberg-go/catalog"
+	"github.com/apache/iceberg-go/catalog/rest"
+	"github.com/apache/iceberg-go/table"
+	"github.com/aws/aws-sdk-go-v2/aws"
+
+	"github.com/redpanda-data/connect/v4/internal/syncx"
+)
+
+// Client wraps the iceberg-go REST catalog client.
+type Client struct {
+	url       string
+	opts      []rest.Option
+	namespace []string
+	mu        *syncx.RWMutex
+
+	catalog atomic.Pointer[rest.Catalog]
+}
+
+// Config holds the catalog configuration.
+type Config struct {
+	URL             string
+	Warehouse       string
+	Prefix          string
+	AdditionalProps iceberg.Properties
+
+	// Authentication
+	AuthType string // "none", "oauth2", "bearer", "sigv4"
+
+	// OAuth2 fields
+	OAuth2ServerURI    *url.URL
+	OAuth2ClientID     string
+	OAuth2ClientSecret string
+	OAuth2Scope        string
+
+	// Bearer token
+	BearerToken string
+
+	// AWS SigV4 fields
+	SigV4Region    string      // AWS region for SigV4 signing (e.g., "us-east-1")
+	SigV4Service   string      // AWS service name for SigV4 signing (default: "execute-api")
+	SigV4AwsConfig *aws.Config // Optional explicit AWS config for SigV4 signing
+
+	// Custom HTTP headers
+	Headers map[string]string
+
+	// TLS configuration
+	TLSSkipVerify bool
+}
+
+// NewCatalogClient creates a new REST catalog client.
+func NewCatalogClient(ctx context.Context, cfg Config, namespace []string) (*Client, error) {
+	// Build options for REST catalog
+	var opts []rest.Option
+
+	// Configure authentication
+	switch cfg.AuthType {
+	case "oauth2":
+		credential := fmt.Sprintf("%s:%s", cfg.OAuth2ClientID, cfg.OAuth2ClientSecret)
+		opts = append(opts, rest.WithCredential(credential))
+		if cfg.OAuth2ServerURI != nil {
+			opts = append(opts, rest.WithAuthURI(cfg.OAuth2ServerURI))
+		}
+		if cfg.OAuth2Scope != "" {
+			opts = append(opts, rest.WithScope(cfg.OAuth2Scope))
+		}
+	case "bearer":
+		opts = append(opts, rest.WithOAuthToken(cfg.BearerToken))
+	case "sigv4":
+		if cfg.SigV4AwsConfig != nil {
+			opts = append(opts, rest.WithAwsConfig(*cfg.SigV4AwsConfig))
+		}
+		if cfg.SigV4Region != "" || cfg.SigV4Service != "" {
+			opts = append(opts, rest.WithSigV4RegionSvc(cfg.SigV4Region, cfg.SigV4Service))
+		} else {
+			opts = append(opts, rest.WithSigV4())
+		}
+	case "none":
+		// No authentication
+	default:
+		return nil, fmt.Errorf("unsupported auth type: %s", cfg.AuthType)
+	}
+
+	if cfg.Warehouse != "" {
+		opts = append(opts, rest.WithWarehouseLocation(cfg.Warehouse))
+	}
+	if cfg.Prefix != "" {
+		opts = append(opts, rest.WithPrefix(cfg.Prefix))
+	}
+	if cfg.AdditionalProps != nil {
+		opts = append(opts, rest.WithAdditionalProps(cfg.AdditionalProps))
+	}
+
+	// Configure custom headers
+	if len(cfg.Headers) > 0 {
+		opts = append(opts, rest.WithHeaders(cfg.Headers))
+	}
+
+	// Configure TLS
+	if cfg.TLSSkipVerify {
+		opts = append(opts, rest.WithTLSConfig(&tls.Config{
+			InsecureSkipVerify: true, //nolint:gosec // User explicitly requested to skip TLS verification
+		}))
+	}
+
+	c := &Client{
+		url:       cfg.URL,
+		opts:      opts,
+		namespace: namespace,
+		mu:        syncx.NewRWMutex(),
+	}
+	// Create REST catalog
+	if err := c.refreshCatalog(ctx); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+func isAuthErr(err error) bool {
+	return errors.Is(err, rest.ErrAuthorizationExpired) || errors.Is(err, rest.ErrForbidden) || errors.Is(err, rest.ErrUnauthorized)
+}
+
+// LoadTable loads an existing table from the catalog.
+func (c *Client) LoadTable(ctx context.Context, tableName string) (*table.Table, error) {
+	identifier := toTableIdentifier(c.namespace, tableName)
+	tbl, err := c.loadCatalog().LoadTable(ctx, identifier)
+	if isAuthErr(err) {
+		if err = c.refreshCatalogOnAuthErr(ctx, err); err != nil {
+			return nil, fmt.Errorf("loading table %s: %w", strings.Join(identifier, "."), err)
+		}
+		tbl, err = c.loadCatalog().LoadTable(ctx, identifier)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("loading table %s: %w", strings.Join(identifier, "."), err)
+	}
+	return tbl, nil
+}
+
+// CreateTable creates a new table with the given schema and optional create options.
+func (c *Client) CreateTable(ctx context.Context, tableName string, schema *iceberg.Schema, opts ...catalog.CreateTableOpt) (*table.Table, error) {
+	identifier := toTableIdentifier(c.namespace, tableName)
+	tbl, err := c.loadCatalog().CreateTable(ctx, identifier, schema, opts...)
+	if isAuthErr(err) {
+		if err = c.refreshCatalogOnAuthErr(ctx, err); err != nil {
+			return nil, fmt.Errorf("creating table %s: %w", strings.Join(identifier, "."), err)
+		}
+		tbl, err = c.loadCatalog().CreateTable(ctx, identifier, schema, opts...)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("creating table %s: %w", strings.Join(identifier, "."), err)
+	}
+	return tbl, nil
+}
+
+// UpdateSchema applies schema changes to the table using a transaction.
+// The callback function receives an UpdateSchema instance that can be used to add, delete,
+// rename, or update columns. The transaction is automatically committed after the callback.
+//
+// Example usage:
+//
+//	err := client.UpdateSchema(ctx, tbl, func(us *table.UpdateSchema) {
+//	    us.AddColumn([]string{"email"}, iceberg.StringType{}, "Email address", false, nil)
+//	    us.AddColumn([]string{"age"}, iceberg.Int32Type{}, "", false, nil)
+//	})
+func (c *Client) UpdateSchema(ctx context.Context, tbl *table.Table, fn func(*table.UpdateSchema), opts ...table.UpdateSchemaOption) (*table.Table, error) {
+	txn := tbl.NewTransaction()
+	updateSchema := txn.UpdateSchema(
+		true,  // caseSensitive
+		false, // allowIncompatibleChanges
+		opts...,
+	)
+
+	// Let the caller configure the schema changes
+	fn(updateSchema)
+
+	// Commit the schema update to the transaction
+	if err := updateSchema.Commit(); err != nil {
+		if refreshErr := c.refreshCatalogOnAuthErr(ctx, err); refreshErr != nil {
+			return nil, fmt.Errorf("refreshing catalog during updating schema txn %w: %v", err, refreshErr)
+		}
+		return nil, fmt.Errorf("applying schema update: %w", err)
+	}
+
+	// Commit the transaction to persist changes
+	table, err := txn.Commit(ctx)
+	if refreshErr := c.refreshCatalogOnAuthErr(ctx, err); refreshErr != nil {
+		return nil, fmt.Errorf("refreshing catalog during updating schema txn %w: %v", err, refreshErr)
+	}
+	return table, err
+}
+
+// AppendDataFiles commits a batch of data files to the table.
+func (c *Client) AppendDataFiles(ctx context.Context, tbl *table.Table, dataFiles []string) (*table.Table, error) {
+	txn := tbl.NewTransaction()
+	if err := txn.AddFiles(ctx, dataFiles, nil, true); err != nil {
+		if refreshErr := c.refreshCatalogOnAuthErr(ctx, err); refreshErr != nil {
+			return nil, fmt.Errorf("refreshing catalog during appending data files %w: %v", err, refreshErr)
+		}
+		return nil, err
+	}
+	table, err := txn.Commit(ctx)
+	if refreshErr := c.refreshCatalogOnAuthErr(ctx, err); refreshErr != nil {
+		return nil, fmt.Errorf("refreshing catalog during committing data file txn %w: %v", err, refreshErr)
+	}
+	return table, err
+}
+
+// CheckTableExists checks if the table exists in the catalog.
+func (c *Client) CheckTableExists(ctx context.Context, tableName string) (bool, error) {
+	identifier := toTableIdentifier(c.namespace, tableName)
+	exists, err := c.loadCatalog().CheckTableExists(ctx, identifier)
+	if isAuthErr(err) {
+		if err = c.refreshCatalogOnAuthErr(ctx, err); err != nil {
+			return false, fmt.Errorf("checking table existence %s: %w", strings.Join(identifier, "."), err)
+		}
+		exists, err = c.loadCatalog().CheckTableExists(ctx, identifier)
+	}
+	if err != nil {
+		return false, fmt.Errorf("checking table existence %s: %w", strings.Join(identifier, "."), err)
+	}
+	return exists, nil
+}
+
+// CreateNamespace creates the configured namespace with the given properties.
+// Returns nil if the namespace already exists (idempotent).
+func (c *Client) CreateNamespace(ctx context.Context, props iceberg.Properties) error {
+	err := c.loadCatalog().CreateNamespace(ctx, c.namespace, props)
+	if isAuthErr(err) {
+		if err = c.refreshCatalogOnAuthErr(ctx, err); err != nil {
+			return fmt.Errorf("creating namespace %s: %w", strings.Join(c.namespace, "."), err)
+		}
+		err = c.loadCatalog().CreateNamespace(ctx, c.namespace, props)
+	}
+	if err != nil {
+		// Check if namespace already exists - treat as success
+		if isNamespaceAlreadyExists(err) {
+			return nil
+		}
+		return fmt.Errorf("creating namespace %s: %w", strings.Join(c.namespace, "."), err)
+	}
+	return nil
+}
+
+// CheckNamespaceExists checks if the configured namespace exists.
+func (c *Client) CheckNamespaceExists(ctx context.Context) (bool, error) {
+	exists, err := c.loadCatalog().CheckNamespaceExists(ctx, c.namespace)
+	if isAuthErr(err) {
+		if err = c.refreshCatalogOnAuthErr(ctx, err); err != nil {
+			return false, fmt.Errorf("checking namespace existence %s: %w", strings.Join(c.namespace, "."), err)
+		}
+		exists, err = c.loadCatalog().CheckNamespaceExists(ctx, c.namespace)
+	}
+	if err != nil {
+		return false, fmt.Errorf("checking namespace existence %s: %w", strings.Join(c.namespace, "."), err)
+	}
+	return exists, nil
+}
+
+// refreshCatalogOnAuthErr refreshes the catalog if err is an authorization error.
+// Returns the refresh error if the refresh fails, nil otherwise (including if err is not an auth error).
+func (c *Client) refreshCatalogOnAuthErr(ctx context.Context, err error) error {
+	if !isAuthErr(err) {
+		return nil
+	}
+	return c.refreshCatalog(ctx)
+}
+
+func (c *Client) refreshCatalog(ctx context.Context) error {
+	if !c.mu.TryLock() {
+		// In this case someone else is trying to refresh the catalog,
+		// let them do it and we can just wait for them to finish without
+		// too much extra IO
+		err := c.mu.Lock(ctx)
+		if err != nil {
+			return err
+		}
+		c.mu.Unlock()
+		return nil
+	}
+	defer c.mu.Unlock()
+	// Create REST catalog
+	restCatalog, err := rest.NewCatalog(
+		ctx,
+		"rest",
+		c.url,
+		c.opts...,
+	)
+	if err != nil {
+		return fmt.Errorf("creating REST catalog: %w", err)
+	}
+	c.catalog.Store(restCatalog)
+	return nil
+}
+
+func (c *Client) loadCatalog() catalog.Catalog {
+	return c.catalog.Load()
+}
+
+// isNamespaceAlreadyExists checks if the error indicates the namespace already exists.
+func isNamespaceAlreadyExists(err error) bool {
+	return errors.Is(err, catalog.ErrNamespaceAlreadyExists)
+}
+
+// Close closes the catalog connection.
+func (*Client) Close() error {
+	return nil
+}
+
+func toTableIdentifier(ns []string, table string) table.Identifier {
+	id := make([]string, len(ns)+1)
+	copy(id, ns)
+	id[len(ns)] = table
+	return id
+}

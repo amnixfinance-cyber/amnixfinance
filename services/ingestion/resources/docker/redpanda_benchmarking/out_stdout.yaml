@@ -1,0 +1,24 @@
+http:
+  address: 0.0.0.0:4195
+  enabled: true
+
+input:
+  redpanda:
+    consumer_group: cg_b
+    topics: [ '.*' ]
+    regexp_topics: true
+    auto_replay_nacks: false
+    partition_buffer_bytes: 1KiB
+
+  processors:
+    - mutation: 'root.source_topic = @kafka_topic'
+
+output:
+  stdout: {}
+
+redpanda:
+  seed_brokers: [ localhost:9092 ]
+
+metrics:
+  prometheus: {}
+

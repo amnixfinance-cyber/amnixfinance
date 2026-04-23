@@ -1,0 +1,9 @@
+name: json_gen
+summary: Just generate some JSON
+# switch to the `examples/json_input.py` to see the simple example run instead
+command: ["uv", "run", "examples/batch_json_input.py"]
+type: input
+fields:
+  - name: count
+    type: int
+    description: number of messages to generate
