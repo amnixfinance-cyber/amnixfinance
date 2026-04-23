@@ -1,6 +1,6 @@
 apiVersion: v2
 name: search
-description: Weaviate search service Helm chart
+description: Weaviate vector search service — AmniX Finance
 type: application
 version: 1.0.0
 appVersion: "1.26.0"
