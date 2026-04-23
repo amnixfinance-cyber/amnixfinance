@@ -258,7 +258,7 @@ extraVolumeMounts:
   # - name: secret
   #   mountPath: /mnt/secret
   #   readOnly: true
-# 
+#
 # -- Configuration settings for resources in Redpanda Connect.
 connectResources:
   # -- Enable resources.
