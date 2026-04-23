@@ -49,7 +49,7 @@ servers:
     port: 8000
   # Internal server endpoints (server HTTP API, health checks, Prometheus metrics, admin UI)
   internal:
-    port: 9000
+    port: 9010
     # Scheme for HTTP/HTTPS (used by probes and metrics scraping)
     scheme: HTTP
   # GRPC API server for backend operations (publish, presence, history, etc.)
@@ -173,7 +173,7 @@ serviceInternal:
   useSeparate: false
   # Service port (forwards to servers.internal.port, default: 9000)
   # Used in both modes: on main service when useSeparate=false, on separate service when useSeparate=true.
-  port: 9000
+  port: 9010
   # Static NodePort for this port. When useSeparate=false, only used if main service.type is NodePort/LoadBalancer.
   nodePort: ""
   # Service type. Only used when useSeparate=true to set the separate service type.
@@ -409,7 +409,7 @@ initContainers: []
 livenessProbe: {}
 #  httpGet:
 #    path: /health
-#    port: 9000  # Should match servers.internal.port
+#    port: 9010  # Should match servers.internal.port
 #    scheme: HTTP  # Should match servers.internal.scheme (HTTP or HTTPS)
 #  initialDelaySeconds: 30
 #  periodSeconds: 10
@@ -423,7 +423,7 @@ livenessProbe: {}
 readinessProbe: {}
 #  httpGet:
 #    path: /health
-#    port: 9000  # Should match servers.internal.port
+#    port: 9010  # Should match servers.internal.port
 #    scheme: HTTP  # Should match servers.internal.scheme (HTTP or HTTPS)
 #  initialDelaySeconds: 3
 #  periodSeconds: 10
@@ -437,7 +437,7 @@ readinessProbe: {}
 startupProbe: {}
 #  httpGet:
 #    path: /health
-#    port: 9000
+#    port: 9010
 #  failureThreshold: 30
 #  periodSeconds: 10
 

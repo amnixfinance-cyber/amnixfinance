@@ -60,6 +60,10 @@ jobs:
           helm repo add weaviate https://weaviate.github.io/weaviate-helm
           helm repo add analytics https://victoriametrics.github.io/helm-charts
           helm repo add billing https://charts.formance.com
+          helm repo add auth https://k8s.ory.sh/helm/charts
+          helm repo add ingestion https://charts.redpanda.com
+          helm repo add processing https://risingwavelabs.github.io/helm-charts
+          helm repo add realtime https://centrifugal.github.io/helm-charts
           helm repo add search https://weaviate.github.io/weaviate-helm
           helm repo update
 
@@ -93,6 +97,10 @@ jobs:
           helm search repo weaviate/weaviate
           helm search repo analytics/victoria-metrics-single
           helm search repo billing/ledger
+          helm search repo auth/kratos
+          helm search repo ingestion/redpanda-connect
+          helm search repo processing/risingwave
+          helm search repo realtime/centrifugo
           helm search repo search/weaviate
 
   trivy-scan:
