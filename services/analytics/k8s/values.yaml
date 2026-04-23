@@ -1,0 +1,23 @@
+replicaCount: 1
+
+image:
+  repository: victoriametrics/victoria-metrics
+  pullPolicy: IfNotPresent
+  tag: "v1.26.2"
+
+service:
+  type: ClusterIP
+  port: 8428
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 1Gi
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 3

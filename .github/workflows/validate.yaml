@@ -56,6 +56,10 @@ jobs:
           helm repo add jetstack https://charts.jetstack.io
           helm repo add lago https://getlago.github.io/lago-helm-charts
           helm repo add risingwave https://risingwavelabs.github.io/helm-charts
+          helm repo add victoriametrics https://victoriametrics.github.io/helm-charts
+          helm repo add weaviate https://weaviate.github.io/weaviate-helm
+          helm repo add analytics https://victoriametrics.github.io/helm-charts
+          helm repo add search https://weaviate.github.io/weaviate-helm
           helm repo update
 
       - name: Validate Helm charts exist
@@ -84,6 +88,10 @@ jobs:
           helm search repo jetstack/cert-manager --version v1.20.2
           helm search repo lago/lago --version 1.27.1
           helm search repo risingwave/risingwave --version 0.2.50
+          helm search repo victoriametrics/victoria-metrics-single
+          helm search repo weaviate/weaviate
+          helm search repo analytics/victoria-metrics-single
+          helm search repo search/weaviate
 
   trivy-scan:
     name: Security Scan
