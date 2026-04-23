@@ -1,0 +1,335 @@
+{{/*
+Copyright RisingWave Labs.
+SPDX-License-Identifier: APACHE-2.0
+*/}}
+
+{{- if not .Values.standalone.enabled -}}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "risingwave.metaComponentName" . }}
+  labels:
+    {{- include "risingwave.labels" . | nindent 4 }}
+    risingwave.risingwavelabs.com/component: meta
+  {{- $annotations := (include "risingwave.annotations" . ) | trim }}
+  {{- if $annotations }}
+  annotations:
+    {{ nindent 4 $annotations }}
+  {{- end }}
+spec:
+  replicas: {{ .Values.metaComponent.replicas }}
+  selector:
+    matchLabels:
+      {{- include "risingwave.selectorLabels" . | nindent 6 }}
+      risingwave.risingwavelabs.com/component: meta
+  serviceName: {{ include "risingwave.metaHeadlessServiceName" . }}
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: "100%"
+  podManagementPolicy: Parallel
+  minReadySeconds: 0
+  {{- if .Values.metaComponent.volumeClaimTemplates }}
+  volumeClaimTemplates:
+  {{- toYaml .Values.metaComponent.volumeClaimTemplates | nindent 2 }}
+  {{- end }}
+  {{- if .Values.metaComponent.persistentVolumeClaimRetentionPolicy }}
+  persistentVolumeClaimRetentionPolicy:
+  {{- toYaml .Values.metaComponent.persistentVolumeClaimRetentionPolicy | nindent 4 }}
+  {{- end }}
+  template:
+    metadata:
+      labels:
+        {{- include "risingwave.selectorLabels" . | nindent 8 }}
+        risingwave.risingwavelabs.com/component: meta
+        risingwave/name: {{ include "risingwave.fullname" . }}
+        risingwave/component: meta
+        {{- if .Values.metaComponent.podLabels }}
+        {{- toYaml .Values.metaComponent.podLabels | nindent 8 }}
+        {{- end }}
+      annotations:
+        {{- if .Values.monitor.annotations.enabled }}
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "{{ .Values.ports.meta.metrics }}"
+        prometheus.io/path: "/metrics"
+        {{- end }}
+        {{- include "risingwave.annotations" . | nindent 8 }}
+        {{- if .Values.metaComponent.podAnnotations }}
+        {{- toYaml .Values.metaComponent.podAnnotations | nindent 8 }}
+        {{- end }}
+        {{- include "risingwave.metaConfigHashAnnotation" . | nindent 8 }}
+    spec:
+      {{- if .Values.image.pullSecrets }}
+      imagePullSecrets:
+      {{- range .Values.image.pullSecrets }}
+      - name: {{ . }}
+      {{- end }}
+      {{- end }}
+      volumes:
+      {{ include "risingwave.licenseKeyVolume" . | nindent 6 }}
+      - name: config
+        configMap:
+          name: {{ include "risingwave.configurationConfigMapName" . }}
+      {{- if .Values.metaComponent.extraVolumes }}
+      {{- toYaml .Values.metaComponent.extraVolumes | nindent 6 }}
+      {{- end }}
+      restartPolicy: Always
+      {{- if .Values.metaComponent.terminationGracePeriodSeconds }}
+      terminationGracePeriodSeconds: {{ .Values.metaComponent.terminationGracePeriodSeconds }}
+      {{- end }}
+      {{- if .Values.metaComponent.nodeSelector }}
+      nodeSelector:
+      {{- toYaml .Values.metaComponent.nodeSelector | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "risingwave.serviceAccountName" . }}
+      automountServiceAccountToken: true
+      hostNetwork: false
+      hostPID: false
+      hostIPC: false
+      {{- if .Values.metaComponent.shareProcessNamespace }}
+      shareProcessNamespace: {{ .Values.metaComponent.shareProcessNamespace }}
+      {{- end }}
+      {{- if .Values.metaComponent.podSecurityContext }}
+      securityContext: {{- toYaml .Values.metaComponent.podSecurityContext | nindent 8 }}
+      {{- end }}
+      {{- if .Values.metaComponent.affinity }}
+      affinity: {{- toYaml .Values.metaComponent.affinity | nindent 8 }}
+      {{- end }}
+      {{- if .Values.metaComponent.schedulerName }}
+      schedulerName: {{ .Values.metaComponent.schedulerName }}
+      {{- end }}
+      {{- if .Values.metaComponent.tolerations }}
+      tolerations: {{- toYaml .Values.metaComponent.tolerations | nindent 8 }}
+      {{- end }}
+      {{- if .Values.metaComponent.priorityClassName }}
+      priorityClassName: {{ .Values.metaComponent.priorityClassName }}
+      {{- end }}
+      {{- if .Values.metaComponent.runtimeClassName }}
+      runtimeClassName: {{ .Values.metaComponent.runtimeClassName }}
+      {{- end }}
+      enableServiceLinks: false
+      preemptionPolicy: PreemptLowerPriority
+      setHostnameAsFQDN: false
+      initContainers:
+      {{- include "risingwave.metaInitContainers" . | nindent 6 }}
+      containers:
+      - name: meta
+        image: {{ include "risingwave.image" . }}
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        {{- if .Values.diagnosticMode.enabled }}
+        command: {{ toYaml .Values.diagnosticMode.command | nindent 8 }}
+        args: {{ toYaml .Values.diagnosticMode.args | nindent 8 }}
+        {{- else }}
+        command:
+        - /risingwave/bin/risingwave
+        - meta-node
+        {{- end }}
+        ports:
+        - containerPort: {{ .Values.ports.meta.svc }}
+          name: svc
+          protocol: TCP
+        - containerPort: {{ .Values.ports.meta.dashboard }}
+          name: dashboard
+          protocol: TCP
+        - containerPort: {{ .Values.ports.meta.metrics }}
+          name: metrics
+          protocol: TCP
+        envFrom:
+        {{- if .Values.metaComponent.extraEnvVarsConfigMap }}
+        - configMapRef:
+            name: {{ .Values.metaComponent.extraEnvVarsConfigMap }}
+        {{- end }}
+        {{- if .Values.metaComponent.extraEnvVarsSecret }}
+        - secretRef:
+            name: {{ .Values.metaComponent.extraEnvVarsSecret }}
+        {{- end }}
+        {{- $credentialsSecret := (include "risingwave.credentialsSecretName" . ) -}}
+        {{- if $credentialsSecret }}
+        - secretRef:
+            name: {{ $credentialsSecret }}
+        {{- end }}
+        {{- if or (include "risingwave.bundle.postgresql.enabled" . ) .Values.metaStore.postgresql.enabled }}
+        - secretRef:
+            name: {{ include "risingwave.postgresCredentialsSecretName" . }}
+        {{- end }}
+        {{- if .Values.metaStore.mysql.enabled }}
+        - secretRef:
+            name: {{ include "risingwave.mysqlCredentialsSecretName" . }}
+        {{- end }}
+        env:
+        {{ include "risingwave.licenseKeyEnv" . | nindent 8 }}
+        {{ include "risingwave.cloudEnvironments" . | nindent 8 }}
+        # Disable auto region loading. Refer to the original source for more information.
+        # https://github.com/awslabs/aws-sdk-rust/blob/main/sdk/aws-config/src/imds/region.rs
+        - name: AWS_EC2_METADATA_DISABLED
+          value: "true"
+        - name: RUST_LOG
+          value: {{ .Values.metaComponent.rustLog }}
+        - name: RUST_BACKTRACE
+          value: {{ .Values.metaComponent.rustBacktrace | quote }}
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: "status.podIP"
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: "metadata.name"
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: "metadata.namespace"
+        - name: CONTAINER_CPU_LIMIT
+          valueFrom:
+            resourceFieldRef:
+              resource: "limits.cpu"
+        - name: CONTAINER_MEMORY_LIMIT
+          valueFrom:
+            resourceFieldRef:
+              resource: "limits.memory"
+        - name: RUST_MIN_STACK
+          value: "4194304"
+        {{- if .Values.stateStore.s3.enabled }}
+        - name: AWS_REGION
+          value: {{ .Values.stateStore.s3.region }}
+        {{- end }}
+        {{- if and .Values.stateStore.s3.enabled .Values.stateStore.s3.forcePathStyle }} 
+        - name: RW_IS_FORCE_PATH_STYLE
+          value: 'true'
+        {{- end }}        
+        {{- if .Values.stateStore.oss.enabled }}
+        - name: OSS_REGION
+          value: {{ .Values.stateStore.oss.region }}
+        {{- end }}
+        {{- if .Values.stateStore.obs.enabled }}
+        - name: OBS_REGION
+          value: {{ .Values.stateStore.obs.region }}
+        {{- end }}
+        {{- if (include "risingwave.bundle.minio.enabled" .) }}
+        - name: MINIO_USERNAME
+          valueFrom:
+            secretKeyRef:
+              key: root-user
+              name: {{ default (include "common.names.fullname" .Subcharts.minio) .Values.minio.auth.existingSecret }}
+        - name: MINIO_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              key: root-password
+              name: {{ default (include "common.names.fullname" .Subcharts.minio) .Values.minio.auth.existingSecret }}
+        {{- end }}
+        {{- if .Values.stateStore.s3.enabled }}
+        {{- if .Values.stateStore.s3.endpoint }}
+        - name: RW_S3_ENDPOINT
+          value: {{ .Values.stateStore.s3.endpoint }}
+        {{- end }}
+        {{- else if .Values.stateStore.oss.enabled }}
+        - name: OSS_ENDPOINT
+          value: {{ include "risingwave.oss.endpoint" . }}
+        {{- else if .Values.stateStore.obs.enabled }}
+        - name: OBS_ENDPOINT
+          value: {{ include "risingwave.obs.endpoint" . }}
+        {{- else if .Values.stateStore.azblob.enabled }}
+        - name: AZBLOB_ENDPOINT
+          value: {{ .Values.stateStore.azblob.endpoint }}
+        {{- end }}
+        - name: RW_CONFIG_PATH
+          value: /risingwave/config/risingwave.meta.toml
+        - name: RW_LISTEN_ADDR
+          value: {{ printf "0.0.0.0:%d" (.Values.ports.meta.svc | int)}}
+        - name: RW_ADVERTISE_ADDR
+        {{- if .Values.metaComponent.advertisingWithIP }}
+          value: "$(POD_IP):{{ .Values.ports.meta.svc }}"
+        {{- else }}
+          value: "$(POD_NAME).{{ include "risingwave.metaHeadlessServiceName" . }}.$(POD_NAMESPACE).svc:{{ .Values.ports.meta.svc }}"
+        {{- end }}
+        - name: RW_PROMETHEUS_HOST
+          value: "0.0.0.0:{{ .Values.ports.meta.metrics }}"
+        - name: RW_STATE_STORE
+          value: {{ include "risingwave.hummockConnectionString" . }}
+        - name: RW_DATA_DIRECTORY
+          value: {{ include "risingwave.stateStoreDataDirectory" . }}
+        - name: RW_DASHBOARD_HOST
+          value: "0.0.0.0:{{ .Values.ports.meta.dashboard }}"
+        - name: RW_BACKEND
+          value: {{ include "risingwave.metaBackend" . }}
+        {{- if .Values.metaComponent.extraEnvVars }}
+        {{- .Values.metaComponent.extraEnvVars | toYaml | nindent 8 }}
+        {{- end }}
+        # SQL meta backend.
+        {{- if and .Values.metaStore.postgresql.enabled .Values.metaStore.postgresql.authentication.existingSecretName }}
+        - name: RW_POSTGRES_USERNAME
+          valueFrom:
+            secretKeyRef:
+              key: username
+              name: {{ .Values.metaStore.postgresql.authentication.existingSecretName }}
+        - name: RW_POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              key: password
+              name: {{ .Values.metaStore.postgresql.authentication.existingSecretName }}
+        {{- end }}
+        {{- if and .Values.metaStore.mysql.enabled .Values.metaStore.mysql.authentication.existingSecretName }}
+        - name: RW_MYSQL_USERNAME
+          valueFrom:
+            secretKeyRef:
+              key: username
+              name: {{ .Values.metaStore.mysql.authentication.existingSecretName }}
+        - name: RW_MYSQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              key: password
+              name: {{ .Values.metaStore.mysql.authentication.existingSecretName }}
+        {{- end }}
+        {{- if (include "risingwave.sqlEndpoint" . ) }}
+        - name: RW_SQL_ENDPOINT
+          value: {{ include "risingwave.sqlEndpoint" . }}
+        {{- end }}
+        {{ include "risingwave.metaStoreSQLBackendCredentialEnvs" . | nindent 8 }}
+        - name: RW_SECRET_STORE_PRIVATE_KEY_HEX
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "risingwave.secretStoreSecretName" . }}
+              key: {{ include "risingwave.secretStorePrivateKeySecretKey" . }}
+        resources:
+          {{- if .Values.metaComponent.resources.limits }}
+          limits:
+            {{ toYaml .Values.metaComponent.resources.limits | nindent 12 }}
+          {{- end }}
+          {{- if .Values.metaComponent.resources.requests }}
+          requests:
+            {{ toYaml .Values.metaComponent.resources.requests | nindent 12 }}
+          {{- end }}
+        volumeMounts:
+        {{ include "risingwave.licenseKeyVolumeMount" . | nindent 8 }}
+        - mountPath: /risingwave/config
+          name: config
+          readOnly: true
+        {{- if .Values.metaComponent.extraVolumeMounts }}
+        {{- toYaml .Values.metaComponent.extraVolumeMounts | nindent 8 }}
+        {{- end }}
+        {{- if .Values.metaComponent.securityContext }}
+        securityContext: {{ toYaml .Values.metaComponent.securityContext | nindent 10 }}
+        {{- end }}
+        {{- if not .Values.diagnosticMode.enabled }}
+        startupProbe:
+          initialDelaySeconds: 2
+          periodSeconds: 5
+          timeoutSeconds: 5
+          failureThreshold: 12
+          tcpSocket:
+            port: svc
+        livenessProbe:
+          initialDelaySeconds: 2
+          periodSeconds: 10
+          tcpSocket:
+            port: svc
+        readinessProbe:
+          initialDelaySeconds: 2
+          periodSeconds: 10
+          tcpSocket:
+            port: svc
+        {{- end }}
+      {{- if .Values.metaComponent.additionalContainers }}
+      {{- toYaml .Values.metaComponent.additionalContainers | nindent 6 }}
+      {{- end }}
+{{- end -}}

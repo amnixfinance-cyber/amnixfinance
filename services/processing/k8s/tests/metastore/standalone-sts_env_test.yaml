@@ -1,0 +1,561 @@
+suite: Test meta store env vars (standalone)
+templates:
+- templates/standalone/standalone-sts.yaml
+chart:
+  appVersion: 1.0.0
+  version: 0.0.1
+set:
+  standalone.enabled: true
+tests:
+# Tests for sqlite.
+## true-negative (sqlite)
+- it: envs must not contain RW_SQL_ENDPOINT (non-sqlite)
+  asserts:
+  - notContains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_SQL_ENDPOINT
+      any: true
+## true-positive (sqlite)
+- it: envs must contain necessary ones (sqlite, legacy)
+  set:
+    metaStore:
+      passSQLCredentialsLegacyMode: true
+      sqlite:
+        enabled: true
+        path: /risingwave.db
+  asserts:
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_BACKEND
+        value: sql
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_SQL_ENDPOINT
+        value: sqlite:///risingwave.db?mode=rwc
+- it: envs must contain necessary ones (sqlite)
+  set:
+    metaStore:
+      passSQLCredentialsLegacyMode: false
+      sqlite:
+        enabled: true
+        path: /risingwave.db
+  asserts:
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_BACKEND
+        value: sqlite
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_SQL_ENDPOINT
+        value: /risingwave.db
+# Tests for PostgreSQL.
+## true-negative (postgres)
+- it: envs must not contain RW_SQL_ENDPOINT (non-postgres)
+  asserts:
+  - notContains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_SQL_ENDPOINT
+      any: true
+## true-positive (postgres)
+- it: envs must contain necessary ones (postgres, legacy)
+  set:
+    metaStore:
+      passSQLCredentialsLegacyMode: true
+      postgresql:
+        enabled: true
+        host: host
+        port: 5432
+        database: risingwave
+        authentication:
+          username: u
+          password: p
+  asserts:
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_BACKEND
+        value: sql
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_SQL_ENDPOINT
+        value: postgres://$(RW_POSTGRES_USERNAME):$(RW_POSTGRES_PASSWORD)@host:5432/risingwave
+  - contains:
+      path: spec.template.spec.containers[0].envFrom
+      content:
+        secretRef:
+          name:  RELEASE-NAME-risingwave-postgres
+- it: envs should reflect options (postgres, legacy)
+  set:
+    metaStore:
+      passSQLCredentialsLegacyMode: true
+      postgresql:
+        enabled: true
+        host: host
+        port: 5432
+        database: risingwave
+        options:
+          a: b
+          c: d=e
+        authentication:
+          username: u
+          password: p
+  asserts:
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_SQL_ENDPOINT
+        value: postgres://$(RW_POSTGRES_USERNAME):$(RW_POSTGRES_PASSWORD)@host:5432/risingwave?a=b&c=d%3De
+- it: envs must reflect existing secret (postgres, legacy)
+  set:
+    metaStore:
+      passSQLCredentialsLegacyMode: true
+      postgresql:
+        enabled: true
+        host: host
+        port: 5432
+        database: risingwave
+        authentication:
+          existingSecretName: s
+  asserts:
+  - notContains:
+      path: spec.template.spec.containers[0].envFrom
+      content:
+        secretRef:
+          name: RELEASE-NAME-risingwave-postgres
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_POSTGRES_USERNAME
+        valueFrom:
+          secretKeyRef:
+            key: username
+            name: s
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_POSTGRES_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            key: password
+            name: s
+- it: envs must contain necessary ones (postgres, tags.postgresql, legacy)
+  set:
+    tags:
+      postgresql: true
+    metaStore:
+      passSQLCredentialsLegacyMode: true
+  asserts:
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_BACKEND
+        value: sql
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_SQL_ENDPOINT
+        value: postgres://$(RW_POSTGRES_USERNAME):$(RW_POSTGRES_PASSWORD)@release-name-postgresql:5432/risingwave
+  - contains:
+      path: spec.template.spec.containers[0].envFrom
+      content:
+        secretRef:
+          name:  RELEASE-NAME-risingwave-postgres
+- it: envs must contain necessary ones (postgres, tags.bundle, legacy)
+  set:
+    tags:
+      bundle: true
+    metaStore:
+      passSQLCredentialsLegacyMode: true
+  asserts:
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_BACKEND
+        value: sql
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_SQL_ENDPOINT
+        value: postgres://$(RW_POSTGRES_USERNAME):$(RW_POSTGRES_PASSWORD)@release-name-postgresql:5432/risingwave
+  - contains:
+      path: spec.template.spec.containers[0].envFrom
+      content:
+        secretRef:
+          name:  RELEASE-NAME-risingwave-postgres
+- it: envs must contain necessary ones (postgres)
+  set:
+    metaStore:
+      passSQLCredentialsLegacyMode: false
+      postgresql:
+        enabled: true
+        host: host
+        port: 5432
+        database: risingwave
+        authentication:
+          username: u
+          password: p
+  asserts:
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_BACKEND
+        value: postgres
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_SQL_ENDPOINT
+        value: host:5432
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_SQL_USERNAME
+        value: $(RW_POSTGRES_USERNAME)
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_SQL_PASSWORD
+        value: $(RW_POSTGRES_PASSWORD)
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_SQL_DATABASE
+        value: risingwave
+  - contains:
+      path: spec.template.spec.containers[0].envFrom
+      content:
+        secretRef:
+          name:  RELEASE-NAME-risingwave-postgres
+- it: envs should reflect options (postgres)
+  set:
+    metaStore:
+      passSQLCredentialsLegacyMode: false
+      postgresql:
+        enabled: true
+        host: host
+        port: 5432
+        database: risingwave
+        options:
+          a: b
+          c: d=e
+        authentication:
+          username: u
+          password: p
+  asserts:
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_SQL_ENDPOINT
+        value: host:5432?a=b&c=d%3De
+- it: envs must reflect existing secret (postgres)
+  set:
+    metaStore:
+      passSQLCredentialsLegacyMode: false
+      postgresql:
+        enabled: true
+        host: host
+        port: 5432
+        database: risingwave
+        authentication:
+          existingSecretName: s
+  asserts:
+  - notContains:
+      path: spec.template.spec.containers[0].envFrom
+      content:
+        secretRef:
+          name: RELEASE-NAME-risingwave-postgres
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_POSTGRES_USERNAME
+        valueFrom:
+          secretKeyRef:
+            key: username
+            name: s
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_POSTGRES_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            key: password
+            name: s
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_SQL_USERNAME
+        value: $(RW_POSTGRES_USERNAME)
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_SQL_PASSWORD
+        value: $(RW_POSTGRES_PASSWORD)
+- it: envs must contain necessary ones (postgres, tags.postgresql)
+  set:
+    tags:
+      postgresql: true
+    metaStore:
+      passSQLCredentialsLegacyMode: false
+  asserts:
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_BACKEND
+        value: postgres
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_SQL_ENDPOINT
+        value: release-name-postgresql:5432
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_SQL_USERNAME
+        value: $(RW_POSTGRES_USERNAME)
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_SQL_PASSWORD
+        value: $(RW_POSTGRES_PASSWORD)
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_SQL_DATABASE
+        value: risingwave
+  - contains:
+      path: spec.template.spec.containers[0].envFrom
+      content:
+        secretRef:
+          name:  RELEASE-NAME-risingwave-postgres
+- it: envs must contain necessary ones (postgres, tags.bundle)
+  set:
+    tags:
+      bundle: true
+    metaStore:
+      passSQLCredentialsLegacyMode: false
+  asserts:
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_BACKEND
+        value: postgres
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_SQL_ENDPOINT
+        value: release-name-postgresql:5432
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_SQL_USERNAME
+        value: $(RW_POSTGRES_USERNAME)
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_SQL_PASSWORD
+        value: $(RW_POSTGRES_PASSWORD)
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_SQL_DATABASE
+        value: risingwave
+  - contains:
+      path: spec.template.spec.containers[0].envFrom
+      content:
+        secretRef:
+          name:  RELEASE-NAME-risingwave-postgres
+# Tests for MySQL.
+## true-negative (mysql)
+- it: envs must not contain RW_SQL_ENDPOINT (non-mysql)
+  asserts:
+  - notContains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_SQL_ENDPOINT
+      any: true
+## true-positive (mysql)
+- it: envs must contain necessary ones (mysql, legacy)
+  set:
+    metaStore:
+      passSQLCredentialsLegacyMode: true
+      mysql:
+        enabled: true
+        host: host
+        port: 5432
+        database: risingwave
+        authentication:
+          username: u
+          password: p
+  asserts:
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_BACKEND
+        value: sql
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_SQL_ENDPOINT
+        value: mysql://$(RW_MYSQL_USERNAME):$(RW_MYSQL_PASSWORD)@host:5432/risingwave
+  - contains:
+      path: spec.template.spec.containers[0].envFrom
+      content:
+        secretRef:
+          name:  RELEASE-NAME-risingwave-mysql
+- it: envs should reflect options (mysql, legacy)
+  set:
+    metaStore:
+      passSQLCredentialsLegacyMode: true
+      mysql:
+        enabled: true
+        host: host
+        port: 5432
+        database: risingwave
+        options:
+          a: b
+          c: d=e
+        authentication:
+          username: u
+          password: p
+  asserts:
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_SQL_ENDPOINT
+        value: mysql://$(RW_MYSQL_USERNAME):$(RW_MYSQL_PASSWORD)@host:5432/risingwave?a=b&c=d%3De
+- it: envs must reflect existing secret (mysql, legacy)
+  set:
+    metaStore:
+      passSQLCredentialsLegacyMode: true
+      mysql:
+        enabled: true
+        host: host
+        port: 5432
+        database: risingwave
+        authentication:
+          existingSecretName: s
+  asserts:
+  - notContains:
+      path: spec.template.spec.containers[0].envFrom
+      content:
+        secretRef:
+          name: RELEASE-NAME-risingwave-mysql
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_MYSQL_USERNAME
+        valueFrom:
+          secretKeyRef:
+            key: username
+            name: s
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_MYSQL_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            key: password
+            name: s
+- it: envs must contain necessary ones (mysql)
+  set:
+    metaStore:
+      passSQLCredentialsLegacyMode: false
+      mysql:
+        enabled: true
+        host: host
+        port: 5432
+        database: risingwave
+        authentication:
+          username: u
+          password: p
+  asserts:
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_BACKEND
+        value: mysql
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_SQL_ENDPOINT
+        value: host:5432
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_SQL_USERNAME
+        value: $(RW_MYSQL_USERNAME)
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_SQL_PASSWORD
+        value: $(RW_MYSQL_PASSWORD)
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_SQL_DATABASE
+        value: risingwave
+  - contains:
+      path: spec.template.spec.containers[0].envFrom
+      content:
+        secretRef:
+          name:  RELEASE-NAME-risingwave-mysql
+- it: envs should reflect options (mysql)
+  set:
+    metaStore:
+      passSQLCredentialsLegacyMode: false
+      mysql:
+        enabled: true
+        host: host
+        port: 5432
+        database: risingwave
+        options:
+          a: b
+          c: d=e
+        authentication:
+          username: u
+          password: p
+  asserts:
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_SQL_ENDPOINT
+        value: host:5432?a=b&c=d%3De
+- it: envs must reflect existing secret (mysql)
+  set:
+    metaStore:
+      passSQLCredentialsLegacyMode: false
+      mysql:
+        enabled: true
+        host: host
+        port: 5432
+        database: risingwave
+        authentication:
+          existingSecretName: s
+  asserts:
+  - notContains:
+      path: spec.template.spec.containers[0].envFrom
+      content:
+        secretRef:
+          name: RELEASE-NAME-risingwave-mysql
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_MYSQL_USERNAME
+        valueFrom:
+          secretKeyRef:
+            key: username
+            name: s
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_MYSQL_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            key: password
+            name: s

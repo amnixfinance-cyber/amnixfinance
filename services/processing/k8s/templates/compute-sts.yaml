@@ -1,0 +1,506 @@
+{{/*
+Copyright RisingWave Labs.
+SPDX-License-Identifier: APACHE-2.0
+*/}}
+
+{{- if not .Values.standalone.enabled -}}
+{{- $resourceGroups := .Values.computeComponent.resourceGroups | default list }}
+{{- $hasGroups := gt (len $resourceGroups) 0 }}
+{{- $defaultGroup := dict "name" "default" }}
+{{- $allGroups := list $defaultGroup }}
+{{- if $hasGroups }}
+  {{- $nameMap := dict }}
+  {{- $_ := set $nameMap "default" true }}
+  {{- range $group := $resourceGroups }}
+    {{- $name := $group.name | default "" }}
+    {{- if eq $name "" }}
+      {{- fail "Each resource group must have a non-empty name." }}
+    {{- end }}
+    {{- if hasKey $nameMap $name }}
+      {{- fail (printf "Duplicate resource group name: '%s'" $name) }}
+    {{- end }}
+    {{- $_ := set $nameMap $name true }}
+    {{- $allGroups = append $allGroups $group }}
+  {{- end }}
+{{- end }}
+{{- range $index, $group := $allGroups }}
+  {{- $ctx := deepCopy $ }}
+  {{- $comp := dict }}
+  {{- range $k, $v := $.Values.computeComponent }}
+    {{- $_ := set $comp $k $v }}
+  {{- end }}
+  {{- if ne $group.name "default" }}
+    {{- range $k, $v := $group }}
+      {{- $_ := set $comp $k $v }}
+    {{- end }}
+  {{- end }}
+  {{- $_ := set $ctx.Values "computeComponent" $comp }}
+  {{- $_ := set $ctx.Values.computeComponent "resourceGroupName" $group.name }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "risingwave.computeComponentName" $ctx }}{{- if ne $group.name "default" }}-{{ $group.name }}{{- end }}
+  labels:
+    {{- include "risingwave.labels" $ctx | nindent 4 }}
+    risingwave.risingwavelabs.com/component: compute
+    {{- if ne $group.name "default" }}
+    risingwave.risingwavelabs.com/resource-group: {{ $group.name }}
+    {{- end }}
+  {{- $annotations := (include "risingwave.annotations" $ctx ) | trim }}
+  {{- if $annotations }}
+  annotations:
+    {{ nindent 4 $annotations }}
+  {{- end }}
+spec:
+  {{- if not $comp.autoscaling.enabled }}
+  replicas: {{ $comp.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "risingwave.selectorLabels" $ctx | nindent 6 }}
+      risingwave.risingwavelabs.com/component: compute
+      {{- if ne $group.name "default" }}
+      risingwave.risingwavelabs.com/resource-group: {{ $group.name }}
+      {{- end }}
+  serviceName: {{ include "risingwave.computeHeadlessServiceName" $ctx }}
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: "100%"
+  podManagementPolicy: Parallel
+  minReadySeconds: 0
+  {{- if $comp.volumeClaimTemplates }}
+  volumeClaimTemplates:
+  {{- toYaml $comp.volumeClaimTemplates | nindent 2 }}
+  {{- end }}
+  {{- if $comp.persistentVolumeClaimRetentionPolicy }}
+  persistentVolumeClaimRetentionPolicy:
+  {{- toYaml $comp.persistentVolumeClaimRetentionPolicy | nindent 4 }}
+  {{- end }}
+  template:
+    metadata:
+      labels:
+        {{- include "risingwave.selectorLabels" $ctx | nindent 8 }}
+        risingwave.risingwavelabs.com/component: compute
+        risingwave/name: {{ include "risingwave.fullname" $ctx }}
+        risingwave/component: compute
+        {{- if ne $group.name "default" }}
+        risingwave.risingwavelabs.com/resource-group: {{ $group.name }}
+        {{- end }}
+        {{- if $comp.podLabels }}
+        {{- toYaml $comp.podLabels | nindent 8 }}
+        {{- end }}
+      annotations:
+        {{- if $ctx.Values.monitor.annotations.enabled }}
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "{{ $ctx.Values.ports.compute.metrics }}"
+        prometheus.io/path: "/metrics"
+        {{- end }}
+        {{- include "risingwave.annotations" $ctx | nindent 8 }}
+        {{- if $comp.podAnnotations }}
+        {{- toYaml $comp.podAnnotations | nindent 8 }}
+        {{- end }}
+        {{- if $group.configuration }}
+        {{- include "risingwave.computeConfigHashAnnotationForResourceGroup" (dict "group" $group "root" $ctx) | nindent 8 }}
+        {{- else }}
+        {{- include "risingwave.computeConfigHashAnnotation" $ctx | nindent 8 }}
+        {{- end }}
+        {{- if $ctx.Values.compactMode.enabled }}
+        {{- include "risingwave.frontendConfigHashAnnotation" $ctx | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- if $ctx.Values.image.pullSecrets }}
+      imagePullSecrets:
+      {{- range $ctx.Values.image.pullSecrets }}
+      - name: {{ . }}
+      {{- end }}
+      {{- end }}
+      volumes:
+      - name: config
+        configMap:
+          name: {{- if $group.configuration }}
+            {{ include "risingwave.configurationConfigMapName" $ctx }}-compute-{{ $group.name }}
+          {{- else }}
+            {{ include "risingwave.configurationConfigMapName" $ctx }}
+          {{- end }}
+      {{- if and $ctx.Values.compactMode.enabled $ctx.Values.tls.existingSecretName }}
+      - name: certs
+        secret:
+          secretName: {{ $ctx.Values.tls.existingSecretName }}
+      {{- end }}
+      {{- if $comp.extraVolumes }}
+      {{- toYaml $comp.extraVolumes | nindent 6 }}
+      {{- end }}
+      restartPolicy: Always
+      {{- if $comp.terminationGracePeriodSeconds }}
+      terminationGracePeriodSeconds: {{ $comp.terminationGracePeriodSeconds }}
+      {{- end }}
+      {{- if $comp.nodeSelector }}
+      nodeSelector:
+      {{- toYaml $comp.nodeSelector | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "risingwave.serviceAccountName" $ctx }}
+      automountServiceAccountToken: true
+      hostNetwork: false
+      hostPID: false
+      hostIPC: false
+      {{- if $comp.shareProcessNamespace }}
+      shareProcessNamespace: {{ $comp.shareProcessNamespace }}
+      {{- end }}
+      {{- if $comp.podSecurityContext }}
+      securityContext: {{- toYaml $comp.podSecurityContext | nindent 8 }}
+      {{- end }}
+      {{- if $comp.affinity }}
+      affinity: {{- toYaml $comp.affinity | nindent 8 }}
+      {{- end }}
+      {{- if $comp.schedulerName }}
+      schedulerName: {{ $comp.schedulerName }}
+      {{- end }}
+      {{- if $comp.tolerations }}
+      tolerations: {{- toYaml $comp.tolerations | nindent 8 }}
+      {{- end }}
+      {{- if $comp.priorityClassName }}
+      priorityClassName: {{ $comp.priorityClassName }}
+      {{- end }}
+      {{- if $comp.runtimeClassName }}
+      runtimeClassName: {{ $comp.runtimeClassName }}
+      {{- end }}
+      enableServiceLinks: false
+      preemptionPolicy: PreemptLowerPriority
+      setHostnameAsFQDN: false
+      containers:
+      - name: compute
+        image: {{ include "risingwave.image" $ctx }}
+        imagePullPolicy: {{ $ctx.Values.image.pullPolicy }}
+        {{- if $ctx.Values.diagnosticMode.enabled }}
+        command: {{ toYaml $ctx.Values.diagnosticMode.command | nindent 8 }}
+        args: {{ toYaml $ctx.Values.diagnosticMode.args | nindent 8 }}
+        {{- else }}
+        command:
+        - /risingwave/bin/risingwave
+        - compute-node
+        {{- if $ctx.Values.frontendComponent.embeddedServing }}
+        args:
+        - --role=streaming
+        {{- end }}
+        {{- if $comp.autoDeregistration.enabled }}
+        lifecycle:
+          preStop:
+            exec:
+              command:
+              - bash
+              - -c
+              - >-
+                /risingwave/bin/risingwave ctl meta unregister-workers --yes \
+                  --workers ${POD_NAME}.{{ include "risingwave.computeHeadlessServiceName" $ctx }}.{{$.Release.Namespace}}.svc:{{ $ctx.Values.ports.compute.svc }}
+        {{- end }}
+        {{- end }}
+        ports:
+        - containerPort: {{ $ctx.Values.ports.compute.svc }}
+          name: svc
+          protocol: TCP
+        - containerPort: {{ $ctx.Values.ports.compute.metrics }}
+          name: metrics
+          protocol: TCP
+        envFrom:
+        {{- if $comp.extraEnvVarsConfigMap }}
+        - configMapRef:
+            name: {{ $comp.extraEnvVarsConfigMap }}
+        {{- end }}
+        {{- if $comp.extraEnvVarsSecret }}
+        - secretRef:
+            name: {{ $comp.extraEnvVarsSecret }}
+        {{- end }}
+        {{- $credentialsSecret := (include "risingwave.credentialsSecretName" $ctx ) -}}
+        {{- if $credentialsSecret }}
+        - secretRef:
+            name: {{ $credentialsSecret }}
+        {{- end }}
+        env:
+        {{- if ne $group.name "default" }}
+        - name: RW_RESOURCE_GROUP
+          value: {{ $group.name | quote }}
+        {{- end }}
+        {{ include "risingwave.cloudEnvironments" $ctx | nindent 8 }}
+        # Disable auto region loading. Refer to the original source for more information.
+        # https://github.com/awslabs/aws-sdk-rust/blob/main/sdk/aws-config/src/imds/region.rs
+        - name: AWS_EC2_METADATA_DISABLED
+          value: "true"
+        - name: RUST_LOG
+          value: {{ $comp.rustLog }}
+        - name: RUST_BACKTRACE
+          value: {{ $comp.rustBacktrace | quote }}
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: "status.podIP"
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: "metadata.name"
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: "metadata.namespace"
+        - name: CONTAINER_CPU_LIMIT
+          valueFrom:
+            resourceFieldRef:
+              resource: "limits.cpu"
+        - name: CONTAINER_MEMORY_LIMIT
+          valueFrom:
+            resourceFieldRef:
+              resource: "limits.memory"
+        - name: RUST_MIN_STACK
+          value: "4194304"
+        {{- if $ctx.Values.stateStore.s3.enabled }}
+        - name: AWS_REGION
+          value: {{ $ctx.Values.stateStore.s3.region }}
+        {{- end }}  
+        {{- if and $ctx.Values.stateStore.s3.enabled $ctx.Values.stateStore.s3.forcePathStyle }} 
+        - name: RW_IS_FORCE_PATH_STYLE
+          value: 'true'
+        {{- end }}
+        {{- if $ctx.Values.stateStore.oss.enabled }}
+        - name: OSS_REGION
+          value: {{ $ctx.Values.stateStore.oss.region }}
+        {{- end }}
+        {{- if $ctx.Values.stateStore.obs.enabled }}
+        - name: OBS_REGION
+          value: {{ $ctx.Values.stateStore.obs.region }}
+        {{- end }}
+        {{- if (include "risingwave.bundle.minio.enabled" $ctx) }}
+        - name: MINIO_USERNAME
+          valueFrom:
+            secretKeyRef:
+              key: root-user
+              name: {{ default (include "common.names.fullname" $ctx.Subcharts.minio) $ctx.Values.minio.auth.existingSecret }}
+        - name: MINIO_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              key: root-password
+              name: {{ default (include "common.names.fullname" $ctx.Subcharts.minio) $ctx.Values.minio.auth.existingSecret }}
+        {{- end }}
+        {{- if $ctx.Values.stateStore.s3.enabled }}
+        {{- if $ctx.Values.stateStore.s3.endpoint }}
+        - name: RW_S3_ENDPOINT
+          value: {{ $ctx.Values.stateStore.s3.endpoint }}
+        {{- end }}
+        {{- else if $ctx.Values.stateStore.oss.enabled }}
+        - name: OSS_ENDPOINT
+          value: {{ include "risingwave.oss.endpoint" $ctx }}
+        {{- else if $ctx.Values.stateStore.obs.enabled }}
+        - name: OBS_ENDPOINT
+          value: {{ include "risingwave.obs.endpoint" $ctx }}
+        {{- else if $ctx.Values.stateStore.azblob.enabled }}
+        - name: AZBLOB_ENDPOINT
+          value: {{ $ctx.Values.stateStore.azblob.endpoint }}
+        {{- end }}
+        - name: RW_CONFIG_PATH
+          value: /risingwave/config/risingwave.compute.toml
+        - name: RW_LISTEN_ADDR
+          value: "0.0.0.0:{{ $ctx.Values.ports.compute.svc }}"
+        - name: RW_ADVERTISE_ADDR
+        {{- if $comp.advertisingWithIP }}
+          value: "$(POD_IP):{{ $ctx.Values.ports.compute.svc }}"
+        {{- else }}
+          value: "$(POD_NAME).{{ include "risingwave.computeHeadlessServiceName" $ctx }}.$(POD_NAMESPACE).svc:{{ $ctx.Values.ports.compute.svc }}"
+        {{- end }}
+        - name: RW_PROMETHEUS_LISTENER_ADDR
+          value: "0.0.0.0:{{ $ctx.Values.ports.compute.metrics }}"
+        - name: RW_META_ADDR
+          value: {{ printf "load-balance+http://%s.%s.svc:%d" (include "risingwave.metaHeadlessServiceName" $ctx) $ctx.Release.Namespace ($ctx.Values.ports.meta.svc | int)}}
+        - name: RW_STATE_STORE
+          value: {{ include "risingwave.hummockConnectionString" $ctx }}
+        - name: RW_DATA_DIRECTORY
+          value: {{ include "risingwave.stateStoreDataDirectory" $ctx }}
+        {{- if $comp.resources.limits }}
+        {{- if $comp.resources.limits.cpu }}
+        - name: RW_PARALLELISM
+          value: $(CONTAINER_CPU_LIMIT)
+        {{- end }}
+        {{- if $comp.resources.limits.memory }}
+        - name: RW_TOTAL_MEMORY_BYTES
+          value: $(CONTAINER_MEMORY_LIMIT)
+        {{- end }}
+        {{- end }}
+        {{- if $comp.extraEnvVars }}
+        {{- $comp.extraEnvVars | toYaml | nindent 8 }}
+        {{- end }}
+        resources:
+          {{- if $comp.resources.limits }}
+          limits:
+            {{ toYaml $comp.resources.limits | nindent 12 }}
+          {{- end }}
+          {{- if $comp.resources.requests }}
+          requests:
+            {{ toYaml $comp.resources.requests | nindent 12 }}
+          {{- end }}
+        volumeMounts:
+        - mountPath: /risingwave/config
+          name: config
+          readOnly: true
+        {{- if $comp.extraVolumeMounts }}
+        {{- toYaml $comp.extraVolumeMounts | nindent 8 }}
+        {{- end }}
+        {{- if $comp.securityContext }}
+        securityContext: {{ toYaml $comp.securityContext | nindent 10 }}
+        {{- end }}
+        {{- if not $ctx.Values.diagnosticMode.enabled }}
+        startupProbe:
+          initialDelaySeconds: 2
+          periodSeconds: 5
+          timeoutSeconds: 5
+          failureThreshold: 12
+          tcpSocket:
+            port: svc
+        livenessProbe:
+          initialDelaySeconds: 2
+          periodSeconds: 10
+          tcpSocket:
+            port: svc
+        readinessProbe:
+          initialDelaySeconds: 2
+          periodSeconds: 10
+          tcpSocket:
+            port: svc
+        {{- end }}
+      {{- if $ctx.Values.compactMode.enabled }}
+      - name: frontend
+        image: {{ include "risingwave.image" $ctx }}
+        imagePullPolicy: {{ $ctx.Values.image.pullPolicy }}
+        {{- if $ctx.Values.diagnosticMode.enabled }}
+        command: {{ toYaml $ctx.Values.diagnosticMode.command | nindent 8 }}
+        args: {{ toYaml $ctx.Values.diagnosticMode.args | nindent 8 }}
+        {{- else }}
+        command:
+        - /risingwave/bin/risingwave
+        - frontend-node
+        {{- end }}
+        ports:
+        - containerPort: {{ $ctx.Values.ports.frontend.svc }}
+          name: f-svc
+          protocol: TCP
+        - containerPort: {{ $ctx.Values.ports.frontend.metrics }}
+          name: f-metrics
+          protocol: TCP
+        {{- if $ctx.Values.frontendComponent.webhookListener }}
+        - containerPort: {{ $ctx.Values.ports.frontend.http }}
+          name: http
+          protocol: TCP
+        {{- end }}
+        envFrom:
+        {{- if $ctx.Values.frontendComponent.extraEnvVarsConfigMap }}
+        - configMapRef:
+            name: {{ $ctx.Values.frontendComponent.extraEnvVarsConfigMap }}
+        {{- end }}
+        {{- if $ctx.Values.frontendComponent.extraEnvVarsSecret }}
+        - secretRef:
+            name: {{ $ctx.Values.frontendComponent.extraEnvVarsSecret }}
+        {{- end }}
+        env:
+        {{ include "risingwave.cloudEnvironments" $ctx | nindent 8 }}
+        # Disable auto region loading. Refer to the original source for more information.
+        # https://github.com/awslabs/aws-sdk-rust/blob/main/sdk/aws-config/src/imds/region.rs
+        - name: AWS_EC2_METADATA_DISABLED
+          value: "true"
+        - name: RUST_LOG
+          value: {{ $ctx.Values.frontendComponent.rustLog }}
+        - name: RUST_BACKTRACE
+          value: {{ $ctx.Values.frontendComponent.rustBacktrace | quote }}
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: "status.podIP"
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: "metadata.name"
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: "metadata.namespace"
+        - name: CONTAINER_CPU_LIMIT
+          valueFrom:
+            resourceFieldRef:
+              resource: "limits.cpu"
+        - name: CONTAINER_MEMORY_LIMIT
+          valueFrom:
+            resourceFieldRef:
+              resource: "limits.memory"
+        - name: RUST_MIN_STACK
+          value: "4194304"
+        - name: RW_CONFIG_PATH
+          value: /risingwave/config/risingwave.frontend.toml
+        - name: RW_LISTEN_ADDR
+          value: "0.0.0.0:{{ $ctx.Values.ports.frontend.svc }}"
+        - name: RW_ADVERTISE_ADDR
+          value: "$(POD_IP):{{ $ctx.Values.ports.frontend.svc }}"
+        - name: RW_PROMETHEUS_LISTENER_ADDR
+          value: "0.0.0.0:{{ $ctx.Values.ports.frontend.metrics }}"
+        - name: RW_META_ADDR
+          value: {{ printf "load-balance+http://%s.%s.svc:%d" (include "risingwave.metaHeadlessServiceName" $ctx) $ctx.Release.Namespace ($ctx.Values.ports.meta.svc | int)}}
+        {{- if $ctx.Values.tls.existingSecretName }}
+        - name: RW_SSL_CERT
+          value: /risingwave/certs/tls.crt
+        - name: RW_SSL_KEY
+          value: /risingwave/certs/tls.key
+        {{- end }}
+        {{- if $ctx.Values.frontendComponent.webhookListener }}
+        - name: RW_WEBHOOK_LISTEN_ADDR
+          value: "0.0.0.0:{{ $ctx.Values.ports.frontend.http }}"
+        {{- end }}
+        {{- if $ctx.Values.frontendComponent.extraEnvVars }}
+        {{- $ctx.Values.frontendComponent.extraEnvVars | toYaml | nindent 8 }}
+        {{- end }}
+        resources:
+          {{- if $ctx.Values.frontendComponent.resources.limits }}
+          limits:
+            {{ toYaml $ctx.Values.frontendComponent.resources.limits | nindent 12 }}
+          {{- end }}
+          {{- if $ctx.Values.frontendComponent.resources.requests }}
+          requests:
+            {{ toYaml $ctx.Values.frontendComponent.resources.requests | nindent 12 }}
+          {{- end }}
+        volumeMounts:
+        - mountPath: /risingwave/config
+          name: config
+          readOnly: true
+        {{- if $ctx.Values.tls.existingSecretName }}
+        - mountPath: /risingwave/certs
+          name: certs
+          readOnly: true
+        {{- end }}
+        {{- if $ctx.Values.frontendComponent.extraVolumeMounts }}
+        {{- toYaml $ctx.Values.frontendComponent.extraVolumeMounts | nindent 8 }}
+        {{- end }}
+        {{- if $ctx.Values.frontendComponent.securityContext }}
+        securityContext: {{ toYaml $ctx.Values.frontendComponent.securityContext | nindent 10 }}
+        {{- end }}
+        {{- if not $ctx.Values.diagnosticMode.enabled }}
+        startupProbe:
+          initialDelaySeconds: 2
+          periodSeconds: 5
+          timeoutSeconds: 5
+          failureThreshold: 12
+          tcpSocket:
+            port: f-svc
+        livenessProbe:
+          initialDelaySeconds: 2
+          periodSeconds: 10
+          tcpSocket:
+            port: f-svc
+        readinessProbe:
+          initialDelaySeconds: 2
+          periodSeconds: 10
+          tcpSocket:
+            port: f-svc
+        {{- end }}
+      {{- end }}
+      {{- if $comp.additionalContainers }}
+      {{- toYaml $comp.additionalContainers | nindent 6 }}
+      {{- end }}
+  {{- if and $hasGroups (lt $index (sub (len $allGroups) 1)) }}
+---
+  {{- end }}
+{{- end }}
+{{- end -}}

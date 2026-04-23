@@ -1,0 +1,124 @@
+suite: Test license key (distributed)
+templates:
+- meta-sts.yaml
+chart:
+  appVersion: 1.0.0
+  version: 0.0.1
+tests:
+- it: no license key
+  asserts:
+  - notContains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_LICENSE_KEY
+      any: true
+  - notContains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_LICENSE_KEY_PATH
+      any: true
+  - notContains:
+      path: spec.template.spec.containers[0].volumeMounts
+      content:
+        name: license
+      any: true
+  - notContains:
+      path: spec.template.spec.volumes
+      content:
+        name: license
+      any: true
+- it: license key found with raw key
+  set:
+    license:
+      key: "ABC"
+  asserts:
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_LICENSE_KEY_PATH
+        value: /license/license.jwt
+  - contains:
+      path: spec.template.spec.containers[0].volumeMounts
+      content:
+        name: license
+        mountPath: /license
+        readOnly: true
+  - contains:
+      path: spec.template.spec.volumes
+      content:
+        name: license
+        secret:
+          secretName: RELEASE-NAME-risingwave-license
+          items:
+          - key: license.jwt
+            path: license.jwt
+  - notContains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_LICENSE_KEY
+      any: true
+- it: license key found with secret ref
+  set:
+    license:
+      secret:
+        name: LICENSE-SECRET
+        key: LICENSE-KEY
+  asserts:
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_LICENSE_KEY_PATH
+        value: /license/license.jwt
+  - contains:
+      path: spec.template.spec.containers[0].volumeMounts
+      content:
+        name: license
+        mountPath: /license
+        readOnly: true
+  - contains:
+      path: spec.template.spec.volumes
+      content:
+        name: license
+        secret:
+          secretName: LICENSE-SECRET
+          items:
+          - key: LICENSE-KEY
+            path: license.jwt
+  - notContains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_LICENSE_KEY
+      any: true
+- it: license key found with secret ref and key
+  set:
+    license:
+      key: "ABC"
+      secret:
+        name: LICENSE-SECRET
+        key: LICENSE-KEY
+  asserts:
+  - contains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_LICENSE_KEY_PATH
+        value: /license/license.jwt
+  - contains:
+      path: spec.template.spec.containers[0].volumeMounts
+      content:
+        name: license
+        mountPath: /license
+        readOnly: true
+  - contains:
+      path: spec.template.spec.volumes
+      content:
+        name: license
+        secret:
+          secretName: LICENSE-SECRET
+          items:
+          - key: LICENSE-KEY
+            path: license.jwt
+  - notContains:
+      path: spec.template.spec.containers[0].env
+      content:
+        name: RW_LICENSE_KEY
+      any: true

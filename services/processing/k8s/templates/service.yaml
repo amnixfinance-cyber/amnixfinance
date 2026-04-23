@@ -1,29 +1,70 @@
-{{- if .Values.http.enabled -}}
+{{/*
+Copyright RisingWave Labs
+SPDX-License-Identifier: APACHE-2.0
+*/}}
+
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "redpanda-connect.fullname" . }}
-  namespace: {{ include "redpanda-connect.namespace" . }}
+  name: {{ include "risingwave.fullname" . }}
   labels:
-    {{- include "redpanda-connect.labels" . | nindent 4 }}
-  {{- if or .Values.commonAnnotations .Values.service.annotations }}
+    {{- include "risingwave.labels" . | nindent 4 }}
+    risingwave.risingwavelabs.com/component: frontend
+    {{- if .Values.service.labels }}
+    {{- toYaml .Values.service.labels | nindent 4 }}
+    {{- end }}
+  {{- $annotations := (include "risingwave.annotations" . ) | trim }}
+  {{- if or $annotations .Values.service.annotations }}
   annotations:
-    {{- include "redpanda-connect.commonAnnotations" . | nindent 4 }}
-    {{- with .Values.service.annotations }}
-    {{- toYaml . | nindent 4 }}
+    {{- if $annotations }}
+    {{- nindent 4 $annotations }}
+    {{- end }}
+    {{- if .Values.service.annotations }}
+    {{- toYaml .Values.service.annotations | nindent 4 }}
     {{- end }}
   {{- end }}
 spec:
   type: {{ .Values.service.type }}
-  ports:
-    - port: {{ .Values.service.port }}
-      targetPort: {{ .Values.service.targetPort }}
-      protocol: {{ .Values.service.protocol }}
-      name: {{ .Values.service.name }}
-
-  {{- with .Values.service.extraPorts }}
-    {{- toYaml . | nindent 4 }}
+  {{- if .Values.service.externalIPs }}
+  externalIPs:
+  {{- range .Values.service.externalIPs }}
+  - {{ . }}
+  {{- end }}
+  {{- end }}
+  {{- if .Values.service.loadBalancerSourceRanges }}
+  loadBalancerSourceRanges:
+  {{- range .Values.service.loadBalancerSourceRanges }}
+  - {{ . }}
+  {{- end }}
+  {{- end }}
+  externalTrafficPolicy: {{ .Values.service.externalTrafficPolicy }}
+  sessionAffinity: {{ .Values.service.sessionAffinity }}
+  {{- if .Values.service.sessionAffinityConfig }}
+  sessionAffinityConfig:
+    {{- toYaml .Values.service.sessionAffinityConfig | nindent 4 }}
   {{- end }}
   selector:
-    {{- include "redpanda-connect.selectorLabels" . | nindent 4 }}
-{{- end -}}
+    {{- include "risingwave.selectorLabels" . | nindent 4 }}
+    {{- if .Values.standalone.enabled }}
+    risingwave.risingwavelabs.com/component: standalone
+    {{- else if .Values.compactMode.enabled }}
+    risingwave.risingwavelabs.com/component: compute
+    {{- else }}
+    risingwave.risingwavelabs.com/component: frontend
+    {{- end }}
+  ports:
+  - name: svc
+    port: {{ .Values.service.port }}
+    {{- if .Values.compactMode.enabled }}
+    targetPort: f-svc
+    {{- else }}
+    targetPort: svc
+    {{- end }}
+    {{- if or (eq .Values.service.type "NodePort") (eq .Values.service.type "LoadBalancer") }}
+    nodePort: {{ .Values.service.nodePort }}
+    {{- end }}
+  {{- if .Values.frontendComponent.webhookListener }}
+  - name: http
+    port: {{ .Values.ports.frontend.http }}
+    targetPort: {{ .Values.ports.frontend.http }}
+  {{- end }}
