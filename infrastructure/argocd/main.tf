@@ -52,10 +52,10 @@ locals {
 #tfsec:ignore:aws-eks-enable-control-plane-logging
 module "eks" {
   source  = "terraform-aws-modules/eks/aws"
-  version = "~> 19.13"
+  version = "~> 21.18"
 
   cluster_name                   = local.name
-  cluster_version                = "1.27"
+  cluster_version = "1.32"
   cluster_endpoint_public_access = true
 
   # EKS Addons
@@ -165,7 +165,7 @@ resource "aws_secretsmanager_secret_version" "argocd" {
 
 module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
-  version = "~> 5.0"
+  version = "~> 6.6"
 
   name = local.name
   cidr = local.vpc_cidr

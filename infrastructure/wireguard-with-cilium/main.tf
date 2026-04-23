@@ -65,10 +65,10 @@ locals {
 #tfsec:ignore:aws-eks-enable-control-plane-logging
 module "eks" {
   source  = "terraform-aws-modules/eks/aws"
-  version = "~> 19.13"
+  version = "~> 21.18"
 
   cluster_name                   = local.name
-  cluster_version                = "1.27"
+  cluster_version = "1.32"
   cluster_endpoint_public_access = true
 
   # EKS Addons
@@ -117,7 +117,7 @@ module "eks" {
 resource "helm_release" "cilium" {
   name             = "cilium"
   chart            = "cilium"
-  version          = "1.13.2"
+  version = "1.19.3"
   repository       = "https://helm.cilium.io/"
   description      = "Cilium Add-on"
   namespace        = "kube-system"
@@ -260,7 +260,7 @@ resource "kubectl_manifest" "client" {
 
 module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
-  version = "~> 5.0"
+  version = "~> 6.6"
 
   name = local.name
   cidr = local.vpc_cidr
