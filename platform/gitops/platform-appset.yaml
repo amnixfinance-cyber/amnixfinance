@@ -12,100 +12,127 @@ spec:
         repoURL: https://helm.cilium.io
         chart: cilium
         version: 1.19.3
+        syncWave: "0"
+      - name: linkerd-crds
+        namespace: linkerd
+        repoURL: https://helm.linkerd.io/stable
+        chart: linkerd-crds
+        version: 1.8.0
+        syncWave: "1"
       - name: linkerd
         namespace: linkerd
         repoURL: https://helm.linkerd.io/stable
         chart: linkerd-control-plane
         version: 1.16.11
-      - name: apisix
-        namespace: apisix
-        repoURL: https://charts.apiseven.com
-        chart: apisix
-        version: 2.14.0
-      - name: redpanda
-        namespace: redpanda
-        repoURL: https://charts.redpanda.com
-        chart: redpanda
-        version: 26.1.2
-      - name: qdrant
-        namespace: qdrant
-        repoURL: https://qdrant.github.io/qdrant-helm
-        chart: qdrant
-        version: 1.17.1
-      - name: quickwit
-        namespace: quickwit
-        repoURL: https://helm.quickwit.io
-        chart: quickwit
-        version: 0.8.4
-      - name: minio
-        namespace: minio
-        repoURL: https://charts.min.io
-        chart: minio
-        version: 5.4.0
-      - name: falco
-        namespace: falco
-        repoURL: https://falcosecurity.github.io/charts
-        chart: falco
-        version: 8.0.2
-      - name: temporal
-        namespace: temporal
-        repoURL: https://go.temporal.io/helm-charts
-        chart: temporal
-        version: 1.1.1
-      - name: ory-kratos
-        namespace: ory
-        repoURL: https://k8s.ory.sh/helm/charts
-        chart: kratos
-        version: 0.61.1
-      - name: loki-stack
-        namespace: monitoring
-        repoURL: https://grafana.github.io/helm-charts
-        chart: loki-stack
-        version: 2.10.3
-      - name: keda
-        namespace: keda
-        repoURL: https://kedacore.github.io/charts
-        chart: keda
-        version: 2.19.0
-      - name: velero
-        namespace: velero
-        repoURL: https://vmware-tanzu.github.io/helm-charts
-        chart: velero
-        version: 12.0.0
-      - name: backstage
-        namespace: backstage
-        repoURL: https://backstage.github.io/charts
-        chart: backstage
-        version: 2.6.3
-      - name: longhorn
-        namespace: longhorn-system
-        repoURL: https://charts.longhorn.io
-        chart: longhorn
-        version: 1.11.1
-      - name: vcluster
-        namespace: vcluster
-        repoURL: https://charts.loft.sh
-        chart: vcluster
-        version: 0.33.1
+        syncWave: "2"
       - name: gatekeeper
         namespace: gatekeeper-system
         repoURL: https://open-policy-agent.github.io/gatekeeper/charts
         chart: gatekeeper
         version: 3.22.0
+        syncWave: "2"
+      - name: longhorn
+        namespace: longhorn-system
+        repoURL: https://charts.longhorn.io
+        chart: longhorn
+        version: 1.11.1
+        syncWave: "2"
+      - name: apisix
+        namespace: apisix
+        repoURL: https://charts.apiseven.com
+        chart: apisix
+        version: 2.14.0
+        syncWave: "3"
+      - name: redpanda
+        namespace: redpanda
+        repoURL: https://charts.redpanda.com
+        chart: redpanda
+        version: 26.1.2
+        syncWave: "3"
+      - name: qdrant
+        namespace: qdrant
+        repoURL: https://qdrant.github.io/qdrant-helm
+        chart: qdrant
+        version: 1.17.1
+        syncWave: "3"
+      - name: quickwit
+        namespace: quickwit
+        repoURL: https://helm.quickwit.io
+        chart: quickwit
+        version: 0.8.4
+        syncWave: "3"
+      - name: minio
+        namespace: minio
+        repoURL: https://charts.min.io
+        chart: minio
+        version: 5.4.0
+        syncWave: "3"
+      - name: falco
+        namespace: falco
+        repoURL: https://falcosecurity.github.io/charts
+        chart: falco
+        version: 8.0.2
+        syncWave: "3"
+      - name: temporal
+        namespace: temporal
+        repoURL: https://go.temporal.io/helm-charts
+        chart: temporal
+        version: 1.1.1
+        syncWave: "3"
+      - name: ory-kratos
+        namespace: ory
+        repoURL: https://k8s.ory.sh/helm/charts
+        chart: kratos
+        version: 0.61.1
+        syncWave: "3"
+      - name: loki-stack
+        namespace: monitoring
+        repoURL: https://grafana.github.io/helm-charts
+        chart: loki-stack
+        version: 2.10.3
+        syncWave: "3"
+      - name: keda
+        namespace: keda
+        repoURL: https://kedacore.github.io/charts
+        chart: keda
+        version: 2.19.0
+        syncWave: "3"
+      - name: velero
+        namespace: velero
+        repoURL: https://vmware-tanzu.github.io/helm-charts
+        chart: velero
+        version: 12.0.0
+        syncWave: "3"
+      - name: vcluster
+        namespace: vcluster
+        repoURL: https://charts.loft.sh
+        chart: vcluster
+        version: 0.33.1
+        syncWave: "3"
       - name: lago
         namespace: lago
         repoURL: https://getlago.github.io/lago-helm-charts
         chart: lago
         version: 1.27.1
+        syncWave: "4"
       - name: grafana-oncall
         namespace: monitoring
         repoURL: https://grafana.github.io/helm-charts
         chart: oncall
         version: 1.16.5
+        syncWave: "4"
+      - name: backstage
+        namespace: backstage
+        repoURL: https://backstage.github.io/charts
+        chart: backstage
+        version: 2.6.3
+        syncWave: "4"
   template:
     metadata:
       name: '{{name}}'
       namespace: argocd
+      annotations:
+        argocd.argoproj.io/sync-wave: '{{syncWave}}'
     spec:
       project: default
       source:
