@@ -1,0 +1,36 @@
+# Ory Kratos Helm Chart Values
+# Chart: kratos 0.61.1 | App: v26.2.0
+
+kratos:
+  replicaCount: 1
+  image:
+    repository: oryd/kratos
+    tag: "v0.13.0"
+    pullPolicy: IfNotPresent
+  config:
+    serve:
+      public:
+        port: 4433
+      admin:
+        port: 4434
+    selfservice:
+      flows:
+        registration:
+          enabled: true
+        login:
+          lifespan: "10m"
+    log:
+      level: info
+      format: json
+  service:
+    public:
+      port: 4433
+    admin:
+      port: 4434
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi

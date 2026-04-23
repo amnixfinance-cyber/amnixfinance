@@ -1,1 +1,0 @@
-ALTER TABLE keto_relation_tuples DROP CONSTRAINT keto_relation_tuples_nid_fk;

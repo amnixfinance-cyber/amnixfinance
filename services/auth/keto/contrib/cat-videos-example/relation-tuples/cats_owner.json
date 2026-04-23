@@ -1,9 +1,0 @@
-{
-  "namespace": "Video",
-  "object": "/cats",
-  "relation": "owner",
-  "subject_set": {
-    "namespace": "User",
-    "object": "Alice"
-  }
-}

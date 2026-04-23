@@ -1,3 +1,0 @@
-{
-  "extends": "@ory/keto-namespace-types/tsconfig.json"
-}

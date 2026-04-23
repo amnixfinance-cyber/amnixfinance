@@ -1,1 +1,0 @@
--- empty migration because cockroach support was added later

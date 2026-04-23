@@ -1,1 +1,0 @@
--- this migration is only for sqlite

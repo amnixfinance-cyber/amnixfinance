@@ -1,7 +1,0 @@
-dsn: memory
-log:
-  level: trace
-
-namespaces:
-  - name: chats
-    id: 1

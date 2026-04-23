@@ -1,7 +1,0 @@
-.schema
-.snapshots
-CHANGELOG.md
-spec
-fixtures
-internal/httpclient/
-oryx

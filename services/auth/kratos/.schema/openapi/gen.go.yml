@@ -1,7 +1,0 @@
-disallowAdditionalPropertiesIfNotPresent: false
-packageName: client
-generateInterfaces: true
-structPrefix: true
-enumClassPrefix: true
-useOneOfDiscriminatorLookup: true
-isGoSubmodule: false

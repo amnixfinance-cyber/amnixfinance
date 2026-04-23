@@ -1,1 +1,0 @@
-DROP INDEX identity_credentials_config_user_handle_idx;

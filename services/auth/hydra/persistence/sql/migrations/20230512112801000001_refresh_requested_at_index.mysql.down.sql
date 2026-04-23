@@ -1,2 +1,0 @@
--- cannot drop because it is used by a foreign key constraint
---DROP INDEX hydra_oauth2_refresh_requested_at_idx ON hydra_oauth2_refresh;

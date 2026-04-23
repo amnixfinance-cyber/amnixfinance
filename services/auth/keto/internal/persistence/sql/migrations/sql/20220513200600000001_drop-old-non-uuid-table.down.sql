@@ -1,1 +1,0 @@
-ALTER TABLE keto_relation_tuples RENAME TO keto_relation_tuples_uuid;

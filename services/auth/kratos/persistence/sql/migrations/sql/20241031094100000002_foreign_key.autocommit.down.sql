@@ -1,1 +1,0 @@
-ALTER TABLE session_token_exchanges DROP CONSTRAINT session_token_exchanges_nid_fk;

@@ -1,1 +1,0 @@
-DROP INDEX keto_relation_tuples_reverse_subject_idx ON keto_relation_tuples;

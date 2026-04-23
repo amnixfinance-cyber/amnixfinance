@@ -1,2 +1,0 @@
--- DROP INDEX identity_credentials_nid_idx ON identity_credentials;
--- can't drop because "needed in a foreign key constraint"

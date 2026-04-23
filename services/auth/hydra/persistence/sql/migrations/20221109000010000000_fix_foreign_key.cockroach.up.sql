@@ -1,1 +1,0 @@
-ALTER TABLE hydra_oauth2_flow DROP CONSTRAINT hydra_oauth2_flow_login_session_id_fk;

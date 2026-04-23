@@ -1,1 +1,0 @@
--- Down migrations from Hydra 2.x to 1.x are not available.

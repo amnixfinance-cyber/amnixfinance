@@ -1,1 +1,0 @@
-ALTER TABLE hydra_jwk ALTER pk DROP DEFAULT;

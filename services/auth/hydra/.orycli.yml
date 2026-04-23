@@ -1,4 +1,0 @@
-project: hydra
-
-pre_release_hooks:
-  - ./script/render-schemas.sh

@@ -1,7 +1,0 @@
-dsn: memory
-log:
-  level: trace
-
-namespaces:
-  - name: messages
-    id: 1
