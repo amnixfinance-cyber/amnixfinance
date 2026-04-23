@@ -1,0 +1,22 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: tekton-pipeline
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/tektoncd/pipeline
+    targetRevision: v1.11.1
+    directory:
+      recurse: true
+      include: 'config/*.yaml'
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: tekton-pipelines
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true
