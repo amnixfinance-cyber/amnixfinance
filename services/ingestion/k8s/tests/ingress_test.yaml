@@ -1,0 +1,70 @@
+suite: ingress tests
+templates:
+  - ingress.yaml
+tests:
+  - it: should enable ingress default
+    set:
+      ingress:
+        enabled: true
+        annotations:
+          test: test
+        hosts:
+          - host: test.local
+            paths:
+              - path: /
+        tls:
+          - secretName: test-tls
+            hosts:
+              - test.local
+    asserts:
+      - matchSnapshot:
+          path: spec
+
+  - it: should apply commonAnnotations to ingress
+    set:
+      ingress:
+        enabled: true
+        hosts:
+          - host: test.local
+            paths:
+              - path: /
+      commonAnnotations:
+        example.com/team: platform
+    asserts:
+      - equal:
+          path: metadata.annotations
+          value:
+            example.com/team: platform
+
+  - it: should merge commonAnnotations with ingress annotations
+    set:
+      ingress:
+        enabled: true
+        annotations:
+          nginx.ingress.kubernetes.io/rewrite-target: /
+        hosts:
+          - host: test.local
+            paths:
+              - path: /
+      commonAnnotations:
+        example.com/team: platform
+    asserts:
+      - equal:
+          path: metadata.annotations
+          value:
+            example.com/team: platform
+            nginx.ingress.kubernetes.io/rewrite-target: /
+
+  - it: should not have ingress annotations when all empty
+    set:
+      ingress:
+        enabled: true
+        annotations: {}
+        hosts:
+          - host: test.local
+            paths:
+              - path: /
+      commonAnnotations: {}
+    asserts:
+      - isNull:
+          path: metadata.annotations
