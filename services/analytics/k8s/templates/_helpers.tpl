@@ -1,81 +1,63 @@
-{{/*
-Expand the name of the chart.
-*/}}
-{{- define "redpanda-connect.name" -}}
-{{- default "redpanda-connect" .Values.nameOverride | trunc 63 | trimSuffix "-" }}
-{{- end }}
+{{- define "vmsingle.scrape.config.name" -}}
+  {{- $Values := (.helm).Values | default .Values -}}
+  {{- $fullname := include "vm.plain.fullname" . -}}
+  {{- $Values.server.scrape.configMap | default (printf "%s-scrapeconfig" $fullname) -}}
+{{- end -}}
 
-{{/*
-Expand the namespace the chart is deployed into.
-*/}}
-{{- define "redpanda-connect.namespace" -}}
-{{- default .Release.Namespace .Values.namespaceOverride }}
-{{- end }}
+{{- define "vmsingle.relabel.config.name" -}}
+  {{- $Values := (.helm).Values | default .Values -}}
+  {{- $fullname := include "vm.plain.fullname" . -}}
+  {{- $Values.server.relabel.configMap | default (printf "%s-relabelconfig" $fullname) -}}
+{{- end -}}
 
-{{/*
-Create a default fully qualified app name.
-We truncate at 63 chars because some Kubernetes name fields are limited to this (by the DNS naming spec).
-If release name contains chart name it will be used as a full name.
-*/}}
-{{- define "redpanda-connect.fullname" -}}
-{{- if .Values.fullnameOverride }}
-{{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
-{{- else }}
-{{- $name := default "redpanda-connect" .Values.nameOverride }}
-{{- if contains $name .Release.Name }}
-{{- .Release.Name | trunc 63 | trimSuffix "-" }}
-{{- else }}
-{{- printf "%s-%s" .Release.Name $name | trunc 63 | trimSuffix "-" }}
-{{- end }}
-{{- end }}
-{{- end }}
+{{- define "vmsingle.args" -}}
+  {{- $Values := (.helm).Values | default .Values }}
+  {{- $app := $Values.server -}}
+  {{- $args := dict -}}
+  {{- $_ := set $args "retentionPeriod" $app.retentionPeriod -}}
+  {{- $_ := set $args "storageDataPath" $app.persistentVolume.mountPath -}}
+  {{- if $app.scrape.enabled -}}
+    {{- $_ := set $args "promscrape.config" "/scrapeconfig/scrape.yml" -}}
+  {{- end -}}
+  {{- if $app.relabel.enabled -}}
+    {{- $_ := set $args "relabelConfig" "/relabelconfig/relabel.yml" -}}
+  {{- end -}}
+  {{- $args = mergeOverwrite $args (fromYaml (include "vm.license.flag" .)) -}}
+  {{- $args = mergeOverwrite $args $app.extraArgs -}}
+  {{- toYaml (fromYaml (include "vm.args" $args)).args -}}
+{{- end -}}
 
-{{/*
-Create chart name and version as used by the chart label.
-*/}}
-{{- define "redpanda-connect.chart" -}}
-{{- printf "%s-%s" "redpanda-connect" .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
-{{- end }}
+{{- define "vmbackupmanager.args" -}}
+  {{- $Values := (.helm).Values | default .Values }}
+  {{- $app := $Values.server -}}
+  {{- $manager := $app.vmbackupmanager -}}
+  {{- $args := dict -}}
+  {{- $_ := set $args "disableHourly" $manager.disableHourly -}}
+  {{- $_ := set $args "disableDaily" $manager.disableDaily -}}
+  {{- $_ := set $args "disableWeekly" $manager.disableWeekly -}}
+  {{- $_ := set $args "disableMonthly" $manager.disableMonthly -}}
+  {{- $_ := set $args "keepLastHourly" $manager.retention.keepLastHourly -}}
+  {{- $_ := set $args "keepLastDaily" $manager.retention.keepLastDaily -}}
+  {{- $_ := set $args "keepLastWeekly" $manager.retention.keepLastWeekly -}}
+  {{- $_ := set $args "keepLastMonthly" $manager.retention.keepLastMonthly -}}
+  {{- $_ := set $args "storageDataPath" $app.persistentVolume.mountPath -}}
+  {{- $_ := set $args "dst" (printf "%s/$(POD_NAME)" $manager.destination) -}}
+  {{- $_ := set $args "snapshot.createURL" "http://localhost:8482/snapshot/create" -}}
+  {{- $_ := set $args "snapshot.deleteURL" "http://localhost:8482/snapshot/delete" -}}
+  {{- $args = mergeOverwrite $args (fromYaml (include "vm.license.flag" .)) -}}
+  {{- $args = mergeOverwrite $args $manager.extraArgs -}}
+  {{- toYaml (fromYaml (include "vm.args" $args)).args -}}
+{{- end -}}
 
-{{/*
-Common labels
-*/}}
-{{- define "redpanda-connect.labels" -}}
-helm.sh/chart: {{ include "redpanda-connect.chart" . }}
-{{ include "redpanda-connect.selectorLabels" . }}
-{{- if .Chart.AppVersion }}
-app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
-{{- end }}
-app.kubernetes.io/managed-by: {{ .Release.Service }}
-{{- if .Values.commonLabels }}
-{{ tpl (toYaml .Values.commonLabels) . }}
-{{- end }}
-{{- end }}
-
-{{/*
-Common annotations
-*/}}
-{{- define "redpanda-connect.commonAnnotations" -}}
-{{- if .Values.commonAnnotations }}
-{{- tpl (toYaml .Values.commonAnnotations) . }}
-{{- end }}
-{{- end }}
-
-{{/*
-Selector labels
-*/}}
-{{- define "redpanda-connect.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "redpanda-connect.name" . }}
-app.kubernetes.io/instance: {{ .Release.Name }}
-{{- end }}
-
-{{/*
-Create the name of the service account to use
-*/}}
-{{- define "redpanda-connect.serviceAccountName" -}}
-{{- if .Values.serviceAccount.create }}
-{{- default (include "redpanda-connect.fullname" .) .Values.serviceAccount.name }}
-{{- else }}
-{{- default "default" .Values.serviceAccount.name }}
-{{- end }}
-{{- end }}
+{{- define "vmbackupmanager.restore.args" -}}
+  {{- $Values := (.helm).Values | default .Values }}
+  {{- $app := $Values.server -}}
+  {{- $manager := $app.vmbackupmanager -}}
+  {{- $args := dict -}}
+  {{- $_ := set $args "storageDataPath" $app.persistentVolume.mountPath -}}
+  {{- $args = mergeOverwrite $args (fromYaml (include "vm.license.flag" .)) -}}
+  {{- $args = mergeOverwrite $args $manager.extraArgs -}}
+  {{- $output := (fromYaml (include "vm.args" $args)).args -}}
+  {{- $output = concat (list "restore") $output -}}
+  {{- toYaml $output -}}
+{{- end -}}

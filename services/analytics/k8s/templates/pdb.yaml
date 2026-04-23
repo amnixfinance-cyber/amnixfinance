@@ -1,23 +1,26 @@
-{{- if .Values.podDisruptionBudget.enabled }}
+{{- $pdb := .Values.podDisruptionBudget }}
+{{- if $pdb.enabled }}
+{{- $ctx := dict "helm" . "appKey" "server" }}
+{{- $fullname := include "vm.plain.fullname" $ctx }}
+{{- $ns := include "vm.namespace" $ctx }}
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: {{ template "redpanda-connect.fullname" . }}
-  namespace: {{ include "redpanda-connect.namespace" . }}
-  labels:
-    {{- include "redpanda-connect.labels" . | nindent 4 }}
-  {{- with .Values.commonAnnotations }}
-  annotations:
-    {{- tpl (toYaml .) $ | nindent 4 }}
-  {{- end }}
+  name: {{ $fullname }}
+  namespace: {{ $ns }}
+  {{- $_ := set $ctx "extraLabels" $pdb.labels }}
+  labels: {{ include "vm.metaLabels" $ctx | nindent 4 }}
+  {{- $_ := unset $ctx "extraLabels" }}
 spec:
-{{- with .Values.podDisruptionBudget.minAvailable }}
+  {{- with $pdb.minAvailable }}
   minAvailable: {{ . }}
-{{- end }}
-{{- with .Values.podDisruptionBudget.maxUnavailable }}
+  {{- end }}
+  {{- with $pdb.maxUnavailable }}
   maxUnavailable: {{ . }}
-{{- end }}
+  {{- end }}
+  {{- with $pdb.unhealthyPodEvictionPolicy }}
+  unhealthyPodEvictionPolicy: {{ . }}
+  {{- end }}
   selector:
-    matchLabels:
-      {{- include "redpanda-connect.selectorLabels" . | nindent 6 }}
+    matchLabels: {{ include "vm.selectorLabels" $ctx | nindent 6 }}
 {{- end }}

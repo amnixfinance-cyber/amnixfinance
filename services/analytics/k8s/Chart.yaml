@@ -1,6 +1,6 @@
 apiVersion: v2
 name: analytics
-description: VictoriaMetrics analytics service Helm chart
+description: VictoriaMetrics Single Node analytics service — AmniX Finance
 type: application
 version: 1.0.0
 appVersion: "1.26.2"
