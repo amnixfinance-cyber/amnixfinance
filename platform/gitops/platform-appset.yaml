@@ -11,7 +11,7 @@ spec:
         namespace: kube-system
         repoURL: https://helm.cilium.io
         chart: cilium
-        version: 1.17.3
+        version: 1.19.3
       - name: linkerd
         namespace: linkerd
         repoURL: https://helm.linkerd.io/stable
@@ -21,47 +21,42 @@ spec:
         namespace: apisix
         repoURL: https://charts.apiseven.com
         chart: apisix
-        version: 2.10.0
+        version: 2.14.0
       - name: redpanda
         namespace: redpanda
         repoURL: https://charts.redpanda.com
         chart: redpanda
-        version: 5.9.23
+        version: 26.1.2
       - name: qdrant
         namespace: qdrant
         repoURL: https://qdrant.github.io/qdrant-helm
         chart: qdrant
-        version: 1.13.2
+        version: 1.17.1
       - name: quickwit
         namespace: quickwit
         repoURL: https://helm.quickwit.io
         chart: quickwit
-        version: 0.6.5
+        version: 0.8.4
       - name: minio
         namespace: minio
         repoURL: https://charts.min.io
         chart: minio
         version: 5.4.0
-      - name: grafana
-        namespace: monitoring
-        repoURL: https://grafana.github.io/helm-charts
-        chart: loki-stack
-        version: 2.10.2
       - name: falco
         namespace: falco
         repoURL: https://falcosecurity.github.io/charts
         chart: falco
-        version: 4.21.2
+        version: 8.0.2
       - name: temporal
         namespace: temporal
         repoURL: https://go.temporal.io/helm-charts
         chart: temporal
-        version: 0.54.0
+        version: 1.1.1
       - name: ory-kratos
         namespace: ory
         repoURL: https://k8s.ory.sh/helm/charts
         chart: kratos
-        version: 0.42.0
+        version: 0.61.1
   template:
     metadata:
       name: '{{name}}'
