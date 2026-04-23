@@ -1,0 +1,20 @@
+{
+  "ID": "sig-0008",
+  "NID": "24704dcb-0ab9-4bfa-a84c-405932ae53fe",
+  "Request": "req-0008",
+  "ConsentChallenge": {
+    "String": "challenge-0014",
+    "Valid": true
+  },
+  "RequestedAt": "2022-02-15T22:20:22Z",
+  "Client": "client-0001",
+  "Scopes": "scope-0008",
+  "GrantedScope": "granted_scope-0008",
+  "RequestedAudience": "requested_audience-0008",
+  "GrantedAudience": "granted_audience-0008",
+  "Form": "form_data-0008",
+  "Subject": "subject-0008",
+  "Active": false,
+  "Session": "c2Vzc2lvbi0wMDA4",
+  "Table": ""
+}

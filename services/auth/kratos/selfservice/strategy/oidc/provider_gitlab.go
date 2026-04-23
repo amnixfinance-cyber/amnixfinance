@@ -1,0 +1,117 @@
+// Copyright © 2023 Ory Corp
+// SPDX-License-Identifier: Apache-2.0
+
+package oidc
+
+import (
+	"cmp"
+	"context"
+	"encoding/json"
+	"net/url"
+	"path"
+
+	"github.com/hashicorp/go-retryablehttp"
+
+	"github.com/ory/x/httpx"
+
+	"github.com/pkg/errors"
+	"golang.org/x/oauth2"
+
+	"github.com/ory/herodot"
+)
+
+const (
+	defaultEndpoint = "https://gitlab.com"
+)
+
+var _ OAuth2Provider = (*ProviderGitLab)(nil)
+
+type ProviderGitLab struct {
+	*ProviderGenericOIDC
+}
+
+func NewProviderGitLab(
+	config *Configuration,
+	reg Dependencies,
+) Provider {
+	return &ProviderGitLab{
+		ProviderGenericOIDC: &ProviderGenericOIDC{
+			config: config,
+			reg:    reg,
+		},
+	}
+}
+
+func (g *ProviderGitLab) oauth2(ctx context.Context) (*oauth2.Config, error) {
+	endpoint, err := g.endpoint()
+	if err != nil {
+		return nil, errors.WithStack(herodot.ErrInternalServerError.WithWrap(err).WithReasonf("%s", err))
+	}
+
+	authURL := *endpoint
+	tokenURL := *endpoint
+
+	authURL.Path = path.Join(authURL.Path, "/oauth/authorize")
+	tokenURL.Path = path.Join(tokenURL.Path, "/oauth/token")
+
+	return &oauth2.Config{
+		ClientID:     g.config.ClientID,
+		ClientSecret: g.config.ClientSecret,
+		Endpoint: oauth2.Endpoint{
+			AuthURL:  authURL.String(),
+			TokenURL: tokenURL.String(),
+		},
+		Scopes:      g.config.Scope,
+		RedirectURL: g.config.Redir(g.reg.Config().OIDCRedirectURIBase(ctx)),
+	}, nil
+}
+
+func (g *ProviderGitLab) OAuth2(ctx context.Context) (*oauth2.Config, error) {
+	return g.oauth2(ctx)
+}
+
+func (g *ProviderGitLab) Claims(ctx context.Context, exchange *oauth2.Token, query url.Values) (*Claims, error) {
+	o, err := g.OAuth2(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	u, err := g.endpoint()
+	if err != nil {
+		return nil, errors.WithStack(herodot.ErrInternalServerError.WithWrap(err).WithReasonf("%s", err))
+	}
+	u.Path = path.Join(u.Path, "/oauth/userinfo")
+
+	ctx, client := httpx.SetOAuth2(ctx, g.reg.HTTPClient(ctx), o, exchange)
+	req, err := retryablehttp.NewRequestWithContext(ctx, "GET", u.String(), nil)
+	if err != nil {
+		return nil, errors.WithStack(herodot.ErrInternalServerError.WithWrap(err).WithReasonf("%s", err))
+	}
+
+	req.Header.Set("Accept", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, errors.WithStack(herodot.ErrUpstreamError.WithWrap(err).WithReasonf("%s", err))
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if err := logUpstreamError(g.reg.Logger(), resp); err != nil {
+		return nil, err
+	}
+
+	var claims Claims
+	if err := json.NewDecoder(resp.Body).Decode(&claims); err != nil {
+		return nil, errors.WithStack(herodot.ErrUpstreamError.WithWrap(err).WithReasonf("%s", err))
+	}
+
+	claims.Issuer = cmp.Or(claims.Issuer, g.config.IssuerURL)
+	return &claims, nil
+}
+
+func (g *ProviderGitLab) endpoint() (*url.URL, error) {
+	e := defaultEndpoint
+	if len(g.config.IssuerURL) > 0 {
+		e = g.config.IssuerURL
+	}
+	return url.Parse(e)
+}

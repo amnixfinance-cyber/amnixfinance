@@ -1,0 +1,9 @@
+{
+  "namespace": "Video",
+  "object": "/cats/1.mp4",
+  "relation": "view",
+  "subject_set": {
+    "namespace": "User",
+    "object": "*"
+  }
+}

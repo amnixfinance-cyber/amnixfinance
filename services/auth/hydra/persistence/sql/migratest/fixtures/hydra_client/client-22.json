@@ -1,0 +1,135 @@
+{
+  "AccessTokenStrategy": "",
+  "AllowedCORSOrigins": [
+    "http://cors/22_1",
+    "http://cors/22_2"
+  ],
+  "Audience": [
+    "autdience-22_1",
+    "autdience-22_2"
+  ],
+  "BackChannelLogoutSessionRequired": true,
+  "BackChannelLogoutURI": "http://back_logout/22",
+  "ClientURI": "http://client/22",
+  "Contacts": [
+    "contact-22_1",
+    "contact-22_2"
+  ],
+  "CreatedAt": "2022-02-15T22:20:23Z",
+  "FrontChannelLogoutSessionRequired": true,
+  "FrontChannelLogoutURI": "http://front_logout/22",
+  "GrantTypes": [
+    "grant-22_1",
+    "grant-22_2"
+  ],
+  "ID": "client-22",
+  "JSONWebKeys": {
+    "JSONWebKeySet": null
+  },
+  "JSONWebKeysURI": "http://jwks/22",
+  "Lifespans": {
+    "AuthorizationCodeGrantAccessTokenLifespan": {
+      "Duration": 0,
+      "Valid": false
+    },
+    "AuthorizationCodeGrantIDTokenLifespan": {
+      "Duration": 0,
+      "Valid": false
+    },
+    "AuthorizationCodeGrantRefreshTokenLifespan": {
+      "Duration": 0,
+      "Valid": false
+    },
+    "ClientCredentialsGrantAccessTokenLifespan": {
+      "Duration": 0,
+      "Valid": false
+    },
+    "DeviceAuthorizationGrantAccessTokenLifespan": {
+      "Duration": 0,
+      "Valid": false
+    },
+    "DeviceAuthorizationGrantIDTokenLifespan": {
+      "Duration": 0,
+      "Valid": false
+    },
+    "DeviceAuthorizationGrantRefreshTokenLifespan": {
+      "Duration": 0,
+      "Valid": false
+    },
+    "ImplicitGrantAccessTokenLifespan": {
+      "Duration": 0,
+      "Valid": false
+    },
+    "ImplicitGrantIDTokenLifespan": {
+      "Duration": 0,
+      "Valid": false
+    },
+    "JwtBearerGrantAccessTokenLifespan": {
+      "Duration": 0,
+      "Valid": false
+    },
+    "PasswordGrantAccessTokenLifespan": {
+      "Duration": 0,
+      "Valid": false
+    },
+    "PasswordGrantRefreshTokenLifespan": {
+      "Duration": 0,
+      "Valid": false
+    },
+    "RefreshTokenGrantAccessTokenLifespan": {
+      "Duration": 0,
+      "Valid": false
+    },
+    "RefreshTokenGrantIDTokenLifespan": {
+      "Duration": 0,
+      "Valid": false
+    },
+    "RefreshTokenGrantRefreshTokenLifespan": {
+      "Duration": 0,
+      "Valid": false
+    }
+  },
+  "LogoURI": "http://logo/22",
+  "Metadata": {
+    "migration": "22"
+  },
+  "NID": "24704dcb-0ab9-4bfa-a84c-405932ae53fe",
+  "Name": "Client 22",
+  "Owner": "owner-22",
+  "PolicyURI": "http://policy/22",
+  "PostLogoutRedirectURIs": [
+    "http://post_redirect/22_1",
+    "http://post_redirect/22_2"
+  ],
+  "RedirectURIs": [
+    "http://redirect/22_1",
+    "http://redirect/22_2"
+  ],
+  "RegistrationAccessToken": "",
+  "RegistrationAccessTokenSignature": "",
+  "RegistrationClientURI": "",
+  "RequestObjectSigningAlgorithm": "r_alg-22",
+  "RequestURIs": [
+    "http://request/22_1",
+    "http://request/22_2"
+  ],
+  "ResponseTypes": [
+    "response-22_1",
+    "response-22_2"
+  ],
+  "Scope": "scope-22",
+  "Secret": "secret-22",
+  "SecretExpiresAt": 0,
+  "SectorIdentifierURI": "http://sector_id/22",
+  "SkipConsent": true,
+  "SkipLogoutConsent": {
+    "Bool": true,
+    "Valid": true
+  },
+  "SubjectType": "subject-22",
+  "TermsOfServiceURI": "http://tos/22",
+  "TokenEndpointAuthMethod": "token_auth-22",
+  "TokenEndpointAuthSigningAlgorithm": "",
+  "UpdatedAt": "2022-02-15T22:20:23Z",
+  "UserinfoSignedResponseAlg": "u_alg-22"
+}

@@ -1,0 +1,42 @@
+{
+  "i": "challenge-0011",
+  "n": "24704dcb-0ab9-4bfa-a84c-405932ae53fe",
+  "rs": [
+    "requested_scope-0011_1"
+  ],
+  "ra": [
+    "requested_audience-0011_1"
+  ],
+  "s": "subject-0011",
+  "oc": {
+    "display": "display-0011"
+  },
+  "ci": "client-0014",
+  "r": "http://request/0011",
+  "si": "auth_session-0011",
+  "ia": "2022-02-15T22:20:21Z",
+  "a": "acr-0011",
+  "ct": {
+    "context": "0011"
+  },
+  "la": null,
+  "dh": null,
+  "cc": "challenge-0011",
+  "cs": true,
+  "gs": [
+    "granted_scope-0011_1"
+  ],
+  "ga": [
+    "granted_audience-0011_1"
+  ],
+  "ce": true,
+  "cf": 11,
+  "ch": null,
+  "cx": null,
+  "st": {
+    "session_id_token-0011": "0011"
+  },
+  "sa": {
+    "session_access_token-0011": "0011"
+  }
+}

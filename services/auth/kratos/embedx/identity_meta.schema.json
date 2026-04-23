@@ -1,0 +1,70 @@
+{
+  "$id": "ory://identity-meta",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "allOf": [
+    {
+      "$ref": "http://json-schema.org/draft-07/schema#"
+    },
+    {
+      "properties": {
+        "properties": {
+          "type": "object",
+          "required": ["traits"],
+          "properties": {
+            "traits": {
+              "type": "object",
+              "required": ["properties"],
+              "properties": {
+                "type": {
+                  "const": "object"
+                },
+                "properties": {
+                  "type": "object",
+                  "minProperties": 1,
+                  "patternProperties": {
+                    ".*": {
+                      "type": "object",
+                      "if": {
+                        "properties": {
+                          "ory.sh/kratos": {
+                            "type": "object",
+                            "properties": {
+                              "verification": {}
+                            },
+                            "required": ["verification"]
+                          }
+                        },
+                        "required": ["ory.sh/kratos"]
+                      },
+                      "then": {
+                        "properties": {
+                          "format": {
+                            "enum": [
+                              "email",
+                              "tel",
+                              "date",
+                              "time",
+                              "date-time",
+                              "no-validate"
+                            ]
+                          }
+                        }
+                      },
+                      "allOf": [
+                        {
+                          "$ref": "ory://identity-extension"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "required": ["properties"]
+    }
+  ]
+}

@@ -1,0 +1,108 @@
+{
+  "$id": "ory://identity-extension",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "allOf": [
+    {
+      "properties": {
+        "ory.sh/kratos": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "credentials": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "password": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "identifier": {
+                      "type": "boolean"
+                    }
+                  }
+                },
+                "webauthn": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "identifier": {
+                      "type": "boolean"
+                    }
+                  }
+                },
+                "passkey": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "display_name": {
+                      "type": "boolean"
+                    }
+                  }
+                },
+                "totp": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "account_name": {
+                      "type": "boolean"
+                    }
+                  }
+                },
+                "code": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "identifier": {
+                      "type": "boolean"
+                    },
+                    "via": {
+                      "type": "string",
+                      "enum": ["email", "sms"]
+                    }
+                  }
+                }
+              }
+            },
+            "verification": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "via": {
+                  "type": "string",
+                  "enum": ["email", "sms"]
+                }
+              }
+            },
+            "recovery": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "via": {
+                  "type": "string",
+                  "enum": ["email", "sms"]
+                }
+              }
+            },
+            "organizations": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "matcher": {
+                  "type": "string",
+                  "enum": ["email_domain"]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "patternProperties": {
+        ".*": {
+          "$ref": "#"
+        }
+      }
+    }
+  ]
+}

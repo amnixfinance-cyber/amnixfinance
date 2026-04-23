@@ -1,0 +1,22 @@
+// Copyright © 2023 Ory Corp
+// SPDX-License-Identifier: Apache-2.0
+
+//go:build !nomysql
+
+package dbx
+
+import (
+	"testing"
+	"time"
+
+	"github.com/ory/x/sqlcon/dockertest"
+)
+
+func RunMySQL(t testing.TB, testDB string) string {
+	url := dockertest.RunTestMySQLWithVersion(t, "8.0")
+	time.Sleep(1 * time.Second)
+	if err := createDB(t, url, testDB); err != nil {
+		t.Fatal(err)
+	}
+	return withDbName(url, testDB)
+}

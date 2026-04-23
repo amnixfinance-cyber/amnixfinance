@@ -1,0 +1,101 @@
+// Copyright © 2023 Ory Corp
+// SPDX-License-Identifier: Apache-2.0
+
+package driver
+
+import (
+	"context"
+
+	"github.com/pkg/errors"
+
+	"github.com/ory/herodot"
+	"github.com/ory/kratos/driver/config"
+	"github.com/ory/kratos/identity"
+	"github.com/ory/kratos/selfservice/flow/verification"
+	"github.com/ory/kratos/selfservice/strategy/link"
+)
+
+func (m *RegistryDefault) VerificationFlowPersister() verification.FlowPersister {
+	return m.persister
+}
+
+func (m *RegistryDefault) VerificationFlowErrorHandler() *verification.ErrorHandler {
+	if m.selfserviceVerifyErrorHandler == nil {
+		m.selfserviceVerifyErrorHandler = verification.NewErrorHandler(m)
+	}
+
+	return m.selfserviceVerifyErrorHandler
+}
+
+func (m *RegistryDefault) VerificationManager() *identity.Manager {
+	if m.selfserviceVerifyManager == nil {
+		m.selfserviceVerifyManager = identity.NewManager(m)
+	}
+
+	return m.selfserviceVerifyManager
+}
+
+func (m *RegistryDefault) VerificationHandler() *verification.Handler {
+	if m.selfserviceVerifyHandler == nil {
+		m.selfserviceVerifyHandler = verification.NewHandler(m)
+	}
+
+	return m.selfserviceVerifyHandler
+}
+
+func (m *RegistryDefault) LinkSender() *link.Sender {
+	if m.selfserviceLinkSender == nil {
+		m.selfserviceLinkSender = link.NewSender(m)
+	}
+
+	return m.selfserviceLinkSender
+}
+
+// GetActiveVerificationStrategies returns the currently active verification strategies.
+// It returns a list of all strategies and the specific primary strategy.
+// If no primary verification strategy has been set, an error is returned.
+func (m *RegistryDefault) GetActiveVerificationStrategies(ctx context.Context) (active verification.Strategies, primary verification.PrimaryStrategy, err error) {
+	as := m.Config().SelfServiceFlowVerificationUse(ctx)
+	s, ps, err := m.VerificationStrategies(ctx).ActiveStrategies(as)
+	if err != nil {
+		return nil, ps, errors.WithStack(herodot.ErrBadRequest.
+			WithReasonf("The active verification strategy %s is not enabled. Please enable it in the configuration.", as))
+	}
+	return s, ps, nil
+}
+
+func (m *RegistryDefault) VerificationStrategies(ctx context.Context) (verificationStrategies verification.Strategies) {
+	for _, strategy := range m.selfServiceStrategies() {
+		if s, ok := strategy.(verification.Strategy); ok {
+			if m.Config().SelfServiceStrategy(ctx, s.VerificationStrategyID()).Enabled {
+				verificationStrategies = append(verificationStrategies, s)
+			}
+		}
+	}
+	return
+}
+
+func (m *RegistryDefault) AllVerificationStrategies() (verificationStrategies verification.Strategies) {
+	for _, strategy := range m.selfServiceStrategies() {
+		if s, ok := strategy.(verification.Strategy); ok {
+			verificationStrategies = append(verificationStrategies, s)
+		}
+	}
+
+	return
+}
+
+func (m *RegistryDefault) VerificationExecutor() *verification.HookExecutor {
+	if m.selfserviceVerificationExecutor == nil {
+		m.selfserviceVerificationExecutor = verification.NewHookExecutor(m)
+	}
+	return m.selfserviceVerificationExecutor
+}
+
+func (m *RegistryDefault) PreVerificationHooks(ctx context.Context) ([]verification.PreHookExecutor, error) {
+	return getHooks[verification.PreHookExecutor](m, "", m.Config().SelfServiceFlowVerificationBeforeHooks(ctx))
+}
+
+func (m *RegistryDefault) PostVerificationHooks(ctx context.Context) ([]verification.PostHookExecutor, error) {
+	return getHooks[verification.PostHookExecutor](m, config.HookGlobal, m.Config().SelfServiceFlowVerificationAfterHooks(ctx, config.HookGlobal))
+}

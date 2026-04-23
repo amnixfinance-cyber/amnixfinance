@@ -1,0 +1,59 @@
+log:
+  level: trace
+  leak_sensitive_values: true
+
+secrets:
+  cookie:
+    - PLEASE-CHANGE-ME-I-AM-VERY-INSECURE
+
+selfservice:
+  default_browser_return_url: http://localhost:4455/
+  allowed_return_urls:
+    - http://localhost:4455
+    - http://localhost:19006/Callback
+    - exp://example.com/Callback
+    - https://www.ory.sh/
+    - https://example.org/
+    - https://www.example.org/
+  methods:
+    link:
+      config:
+        lifespan: 1h
+    code:
+      config:
+        lifespan: 1h
+
+serve:
+  public:
+    base_url: http://localhost:4455/
+    cors:
+      enabled: true
+      allowed_origins:
+        - http://localhost:3000
+        - http://localhost:19006
+      allowed_headers:
+        - Authorization
+        - Content-Type
+        - X-Session-Token
+  admin:
+    base_url: http://kratos:4434/
+
+hashers:
+  algorithm: argon2
+  argon2:
+    memory: 1KB
+    iterations: 1
+    parallelism: 1
+
+courier:
+  smtp:
+    connection_uri: smtps://test:test@localhost:1025/?skip_ssl_verify=true
+
+session:
+  whoami:
+    required_aal: aal1
+
+feature_flags:
+  legacy_continue_with_verification_ui: true
+  legacy_require_verified_login_error: true
+  legacy_oidc_registration_node_group: true

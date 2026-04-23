@@ -1,0 +1,13 @@
+- op: remove
+  path: /components/schemas/updateIdentityBody/properties/metadata_admin/type
+- op: remove
+  path: /components/schemas/updateIdentityBody/properties/metadata_public/type
+- op: remove
+  path: /components/schemas/createIdentityBody/properties/metadata_admin/type
+- op: remove
+  path: /components/schemas/createIdentityBody/properties/metadata_public/type
+- op: remove
+  path: /components/schemas/nullJsonRawMessage/type
+- op: add
+  path: /components/schemas/nullJsonRawMessage/nullable
+  value: true

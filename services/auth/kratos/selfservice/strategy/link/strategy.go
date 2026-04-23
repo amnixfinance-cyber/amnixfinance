@@ -1,0 +1,83 @@
+// Copyright © 2023 Ory Corp
+// SPDX-License-Identifier: Apache-2.0
+
+package link
+
+import (
+	"github.com/ory/kratos/courier"
+	"github.com/ory/kratos/driver/config"
+	"github.com/ory/kratos/identity"
+	"github.com/ory/kratos/schema"
+	"github.com/ory/kratos/selfservice/errorx"
+	"github.com/ory/kratos/selfservice/flow/recovery"
+	"github.com/ory/kratos/selfservice/flow/settings"
+	"github.com/ory/kratos/selfservice/flow/verification"
+	"github.com/ory/kratos/session"
+	"github.com/ory/kratos/ui/container"
+	"github.com/ory/kratos/ui/node"
+	"github.com/ory/kratos/x"
+	"github.com/ory/kratos/x/nosurfx"
+	"github.com/ory/x/httpx"
+	"github.com/ory/x/logrusx"
+	"github.com/ory/x/otelx"
+)
+
+var (
+	_ recovery.Strategy     = (*Strategy)(nil)
+	_ verification.Strategy = (*Strategy)(nil)
+	_ x.Handler             = (*Strategy)(nil)
+)
+
+type (
+	// FlowMethod contains the configuration for this selfservice strategy.
+	FlowMethod struct {
+		*container.Container
+	}
+
+	dependencies interface {
+		nosurfx.CSRFProvider
+		nosurfx.CSRFTokenGeneratorProvider
+		httpx.WriterProvider
+		logrusx.Provider
+		otelx.Provider
+		x.TransactionPersistenceProvider
+
+		config.Provider
+
+		session.HandlerProvider
+		session.ManagementProvider
+		settings.HandlerProvider
+		settings.FlowPersistenceProvider
+
+		identity.ValidationProvider
+		identity.ManagementProvider
+		identity.PoolProvider
+		identity.PrivilegedPoolProvider
+
+		courier.Provider
+
+		errorx.ManagementProvider
+
+		recovery.ErrorHandlerProvider
+		recovery.FlowPersistenceProvider
+		recovery.StrategyProvider
+		recovery.HookExecutorProvider
+
+		verification.ErrorHandlerProvider
+		verification.FlowPersistenceProvider
+		verification.StrategyProvider
+		verification.HookExecutorProvider
+		verification.HandlerProvider
+
+		RecoveryTokenPersistenceProvider
+		VerificationTokenPersistenceProvider
+		SenderProvider
+
+		schema.IdentitySchemaProvider
+	}
+
+	Strategy struct{ d dependencies }
+)
+
+func NewStrategy(d dependencies) *Strategy      { return &Strategy{d: d} }
+func (s *Strategy) NodeGroup() node.UiNodeGroup { return node.LinkGroup }

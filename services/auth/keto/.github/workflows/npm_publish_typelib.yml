@@ -1,0 +1,40 @@
+name: Publish OPL typelib to npm
+
+on:
+  release:
+    types:
+      - created
+  workflow_dispatch:
+    inputs:
+      version:
+        required: true
+        description: The version to release
+
+jobs:
+  btp:
+    runs-on: ubuntu-latest
+    name: Publish
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+      - run: sudo npm i -g npm@10
+      - name: Bump version
+        run: |-
+          cd contrib/namespace-type-lib
+          jq '.version = (env.RELEASE_VERSION | sub("(^refs/tags/v)|(^v)"; ""))' package.json > package.json.tmp \
+            && mv package.json.tmp package.json
+        env:
+          RELEASE_VERSION: ${{ github.event.inputs.version || github.ref }}
+      - run: |-
+          git config --global user.email "60093411+ory-bot@users.noreply.github.com"
+          git config --global user.name "ory-bot"
+          git add contrib/namespace-type-lib/package.json
+          git commit -m "autogen: bump OPL typelib"
+      - run: |-
+          cd contrib/namespace-type-lib
+          npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN_AENEASR }}

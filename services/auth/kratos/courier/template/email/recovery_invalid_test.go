@@ -1,0 +1,30 @@
+// Copyright © 2023 Ory Corp
+// SPDX-License-Identifier: Apache-2.0
+
+package email_test
+
+import (
+	"context"
+	"testing"
+
+	"github.com/ory/kratos/courier/template"
+	"github.com/ory/kratos/courier/template/email"
+	"github.com/ory/kratos/courier/template/testhelpers"
+	"github.com/ory/kratos/pkg"
+)
+
+func TestRecoverInvalid(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	t.Run("test=with courier templates directory", func(t *testing.T) {
+		_, reg := pkg.NewFastRegistryWithMocks(t)
+		tpl := email.NewRecoveryInvalid(reg, &email.RecoveryInvalidModel{})
+
+		testhelpers.TestRendered(t, ctx, tpl)
+	})
+
+	t.Run("case=test remote resources", func(t *testing.T) {
+		testhelpers.TestRemoteTemplates(t, "../courier/builtin/templates/recovery/invalid", template.TypeRecoveryInvalid)
+	})
+}

@@ -1,0 +1,296 @@
+// Copyright © 2023 Ory Corp
+// SPDX-License-Identifier: Apache-2.0
+
+package code_test
+
+import (
+	"context"
+	"encoding/base64"
+	"fmt"
+	"net/http"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
+
+	"github.com/ory/x/configx"
+
+	"github.com/ory/kratos/courier"
+	"github.com/ory/kratos/driver/config"
+	"github.com/ory/kratos/identity"
+	"github.com/ory/kratos/pkg"
+	"github.com/ory/kratos/pkg/testhelpers"
+	"github.com/ory/kratos/selfservice/flow"
+	"github.com/ory/kratos/selfservice/flow/recovery"
+	"github.com/ory/kratos/selfservice/flow/verification"
+	"github.com/ory/kratos/selfservice/strategy/code"
+	"github.com/ory/x/urlx"
+)
+
+var b64 = func(str string) string {
+	return base64.StdEncoding.EncodeToString([]byte(str))
+}
+
+func TestSender(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	conf, reg := pkg.NewFastRegistryWithMocks(t,
+		configx.WithValues(testhelpers.DefaultIdentitySchemaConfig("file://./stub/default.schema.json")),
+		configx.WithValues(map[string]any{
+			config.ViperKeyPublicBaseURL:                                  "https://www.ory.sh/",
+			config.ViperKeyCourierSMTPURL:                                 "smtp://foo@bar@dev.null/",
+			config.ViperKeySelfServiceRecoveryNotifyUnknownRecipients:     true,
+			config.ViperKeySelfServiceVerificationNotifyUnknownRecipients: true,
+		}),
+	)
+
+	conf.MustSet(ctx, config.ViperKeyWebhookHeaderAllowlist, []string{"user-agent", "X-CUSTOM-HEADER"})
+
+	u := &http.Request{URL: urlx.ParseOrPanic("https://www.ory.sh/")}
+
+	i := identity.NewIdentity(config.DefaultIdentityTraitsSchemaID)
+
+	// Fake phone numbers which are unallocated numbers that telephone companies cannot assign
+	// to customers in Germany under current legislation.
+	// This is to protect residents against the potential influx of phone calls
+	// that they may receive should their telephone numbers appear in a movie or film.
+	phoneNumberKnown := "+49-160-555-5762"
+	phoneNumberUnknown := "+49-155-555-4570"
+	i.Traits = identity.Traits(fmt.Sprintf(`{"email": "tracked@ory.sh", "phone": "%s"}`, phoneNumberKnown))
+	require.NoError(t, reg.IdentityManager().Create(ctx, i))
+
+	t.Run("method=SendRecoveryCode email", func(t *testing.T) {
+		recoveryCode := func(t *testing.T) {
+			t.Helper()
+			f, err := recovery.NewFlow(conf, time.Hour, "", u, recovery.Strategies{code.NewStrategy(reg)}, flow.TypeBrowser)
+			require.NoError(t, err)
+
+			require.NoError(t, reg.RecoveryFlowPersister().CreateRecoveryFlow(ctx, f))
+
+			header := http.Header{}
+			header.Add("user-agent", "user-agent header")
+			header.Add("X-CUSTOM-HEADER", "x-custom header 1")
+			header.Add("X-Custom-header", "x-custom header 2")
+			header.Add("some-other-header", "some-other-value")
+			require.NoError(t, reg.CodeSender().SendRecoveryCode(ctx, f, "email", "tracked@ory.sh", header))
+			require.ErrorIs(t, reg.CodeSender().SendRecoveryCode(ctx, f, "email", "not-tracked@ory.sh", header), code.ErrUnknownAddress)
+		}
+
+		t.Run("case=with default templates", func(t *testing.T) {
+			recoveryCode(t)
+			messages, err := reg.CourierPersister().NextMessages(ctx, 12)
+			require.NoError(t, err)
+			require.Len(t, messages, 2)
+
+			assert.EqualValues(t, "tracked@ory.sh", messages[0].Recipient)
+			assert.Contains(t, messages[0].Subject, "Use code")
+
+			assert.Regexp(t, testhelpers.CodeRegex, messages[0].Body)
+
+			assert.EqualValues(t, "not-tracked@ory.sh", messages[1].Recipient)
+			assert.Contains(t, messages[1].Subject, "Account access attempted")
+
+			assert.NotRegexp(t, testhelpers.CodeRegex, messages[1].Body, "Expected message to not contain an 6 digit recovery code, but it did: ", messages[1].Body)
+
+			headers := messages[0].RequestHeaders
+			assert.Equal(t, []any{"user-agent header"}, gjson.GetBytes(headers, "User-Agent").Value())
+			assert.Equal(t, []any{"x-custom header 1", "x-custom header 2"}, gjson.GetBytes(headers, "X-Custom-Header").Value())
+			assert.Empty(t, gjson.GetBytes(headers, "Some-Other-Header").Value(), "Expected Some-Other-Header to be empty")
+		})
+
+		t.Run("case=with custom templates", func(t *testing.T) {
+			subject := "custom template recovery code"
+			body := "custom template recovery code body"
+			t.Cleanup(func() {
+				conf.MustSet(ctx, config.ViperKeyCourierTemplatesRecoveryCodeInvalidEmail, nil)
+				conf.MustSet(ctx, config.ViperKeyCourierTemplatesRecoveryCodeValidEmail, nil)
+			})
+			conf.MustSet(ctx, config.ViperKeyCourierTemplatesRecoveryCodeInvalidEmail, fmt.Sprintf(`{ "subject": "base64://%s", "body": { "plaintext": "base64://%s", "html": "base64://%s" }}`, b64(subject+" invalid"), b64(body), b64(body)))
+			conf.MustSet(ctx, config.ViperKeyCourierTemplatesRecoveryCodeValidEmail, fmt.Sprintf(`{ "subject": "base64://%s", "body": { "plaintext": "base64://%s", "html": "base64://%s" }}`, b64(subject+" valid"), b64(body+" {{ .RecoveryCode }}"), b64(body+" {{ .RecoveryCode }}")))
+			recoveryCode(t)
+			messages, err := reg.CourierPersister().NextMessages(ctx, 12)
+			require.NoError(t, err)
+			require.Len(t, messages, 2)
+
+			assert.EqualValues(t, "tracked@ory.sh", messages[0].Recipient)
+			assert.Equal(t, messages[0].Subject, subject+" valid")
+			assert.Contains(t, messages[0].Body, body)
+
+			assert.Regexp(t, testhelpers.CodeRegex, messages[0].Body)
+
+			assert.EqualValues(t, "not-tracked@ory.sh", messages[1].Recipient)
+			assert.Equal(t, messages[1].Subject, subject+" invalid")
+			assert.Equal(t, messages[1].Body, body)
+
+			headers := messages[0].RequestHeaders
+			assert.Equal(t, []any{"user-agent header"}, gjson.GetBytes(headers, "User-Agent").Value())
+			assert.Equal(t, []any{"x-custom header 1", "x-custom header 2"}, gjson.GetBytes(headers, "X-Custom-Header").Value())
+			assert.Empty(t, gjson.GetBytes(headers, "Some-Other-Header").Value(), "Expected Some-Other-Header to be empty")
+		})
+	})
+
+	t.Run("method=SendRecoveryCode sms", func(t *testing.T) {
+		recoveryCode := func(t *testing.T) {
+			t.Helper()
+			f, err := recovery.NewFlow(conf, time.Hour, "", u, recovery.Strategies{code.NewStrategy(reg)}, flow.TypeBrowser)
+			require.NoError(t, err)
+
+			require.NoError(t, reg.RecoveryFlowPersister().CreateRecoveryFlow(ctx, f))
+
+			header := http.Header{}
+			header.Add("user-agent", "user-agent header")
+			header.Add("X-CUSTOM-HEADER", "x-custom header 1")
+			header.Add("X-Custom-header", "x-custom header 2")
+			header.Add("some-other-header", "some-other-value")
+			require.NoError(t, reg.CodeSender().SendRecoveryCode(ctx, f, "sms", phoneNumberKnown, header))
+			require.ErrorIs(t, reg.CodeSender().SendRecoveryCode(ctx, f, "sms", phoneNumberUnknown, header), code.ErrUnknownAddress)
+		}
+
+		t.Run("case=with default templates", func(t *testing.T) {
+			recoveryCode(t)
+			messages, err := reg.CourierPersister().NextMessages(ctx, 12)
+			require.NoError(t, err)
+			require.Len(t, messages, 1)
+
+			assert.EqualValues(t, phoneNumberKnown, messages[0].Recipient)
+			assert.Contains(t, messages[0].Body, "Your recovery code is:")
+			assert.Contains(t, messages[0].Body, "@www.ory.sh #")
+
+			assert.Regexp(t, testhelpers.CodeRegex, messages[0].Body)
+		})
+
+		t.Run("case=with custom templates", func(t *testing.T) {
+			body := "custom template recovery code body"
+			t.Cleanup(func() {
+				conf.MustSet(ctx, config.ViperKeyCourierTemplatesRecoveryCodeValidSMS, nil)
+			})
+			conf.MustSet(ctx, config.ViperKeyCourierTemplatesRecoveryCodeValidSMS, fmt.Sprintf(`{ "body": { "plaintext": "base64://%s"}}`, b64(body+" {{ .RecoveryCode }}")))
+			recoveryCode(t)
+			messages, err := reg.CourierPersister().NextMessages(ctx, 12)
+			require.NoError(t, err)
+			require.Len(t, messages, 1)
+
+			assert.EqualValues(t, phoneNumberKnown, messages[0].Recipient)
+			assert.Contains(t, messages[0].Body, body)
+			headers := messages[0].RequestHeaders
+			assert.Equal(t, []any{"user-agent header"}, gjson.GetBytes(headers, "User-Agent").Value())
+			assert.Equal(t, []any{"x-custom header 1", "x-custom header 2"}, gjson.GetBytes(headers, "X-Custom-Header").Value())
+			assert.Empty(t, gjson.GetBytes(headers, "Some-Other-Header").Value(), "Expected Some-Other-Header to be empty")
+
+			assert.Regexp(t, testhelpers.CodeRegex, messages[0].Body)
+		})
+	})
+
+	t.Run("method=SendVerificationCode", func(t *testing.T) {
+		verificationFlow := func(t *testing.T) {
+			t.Helper()
+
+			f, err := verification.NewFlow(conf, time.Hour, "", u, verification.Strategies{code.NewStrategy(reg)}, flow.TypeBrowser)
+			require.NoError(t, err)
+
+			require.NoError(t, reg.VerificationFlowPersister().CreateVerificationFlow(ctx, f))
+
+			require.NoError(t, reg.CodeSender().SendVerificationCode(ctx, f, "email", "tracked@ory.sh"))
+			require.ErrorIs(t, reg.CodeSender().SendVerificationCode(ctx, f, "email", "not-tracked@ory.sh"), code.ErrUnknownAddress)
+		}
+
+		t.Run("case=with default templates", func(t *testing.T) {
+			verificationFlow(t)
+			messages, err := reg.CourierPersister().NextMessages(ctx, 12)
+			require.NoError(t, err)
+			require.Len(t, messages, 2)
+
+			assert.EqualValues(t, "tracked@ory.sh", messages[0].Recipient)
+			assert.Contains(t, messages[0].Subject, "Use code")
+
+			assert.Regexp(t, testhelpers.CodeRegex, messages[0].Body)
+
+			assert.EqualValues(t, "not-tracked@ory.sh", messages[1].Recipient)
+			assert.Contains(t, messages[1].Subject, "Someone tried to verify this email address")
+
+			assert.NotRegexp(t, testhelpers.CodeRegex, messages[1].Body, "Expected message to not contain an 6 digit recovery code, but it did: ", messages[1].Body)
+		})
+
+		t.Run("case=with custom templates", func(t *testing.T) {
+			subject := "custom template verification code"
+			body := "custom template verification code body"
+			t.Cleanup(func() {
+				conf.MustSet(ctx, config.ViperKeyCourierTemplatesVerificationCodeInvalidEmail, nil)
+				conf.MustSet(ctx, config.ViperKeyCourierTemplatesVerificationCodeValidEmail, nil)
+			})
+			conf.MustSet(ctx, config.ViperKeyCourierTemplatesVerificationCodeInvalidEmail, fmt.Sprintf(`{ "subject": "base64://%s", "body": { "plaintext": "base64://%s", "html": "base64://%s" }}`, b64(subject+" invalid"), b64(body), b64(body)))
+			conf.MustSet(ctx, config.ViperKeyCourierTemplatesVerificationCodeValidEmail, fmt.Sprintf(`{ "subject": "base64://%s", "body": { "plaintext": "base64://%s", "html": "base64://%s" }}`, b64(subject+" valid"), b64(body+" {{ .VerificationCode }}"), b64(body+" {{ .VerificationCode }}")))
+			verificationFlow(t)
+			messages, err := reg.CourierPersister().NextMessages(ctx, 12)
+			require.NoError(t, err)
+			require.Len(t, messages, 2)
+
+			assert.EqualValues(t, "tracked@ory.sh", messages[0].Recipient)
+			assert.Equal(t, messages[0].Subject, subject+" valid")
+			assert.Contains(t, messages[0].Body, body)
+
+			assert.Regexp(t, testhelpers.CodeRegex, messages[0].Body)
+
+			assert.EqualValues(t, "not-tracked@ory.sh", messages[1].Recipient)
+			assert.Equal(t, messages[1].Subject, subject+" invalid")
+			assert.Equal(t, messages[1].Body, body)
+		})
+	})
+
+	t.Run("case=should be able to disable invalid email dispatch", func(t *testing.T) {
+		for _, tc := range []struct {
+			flow      string
+			send      func(t *testing.T)
+			configKey string
+		}{
+			{
+				flow:      "recovery",
+				configKey: config.ViperKeySelfServiceRecoveryNotifyUnknownRecipients,
+				send: func(t *testing.T) {
+					s, _, err := reg.RecoveryStrategies(ctx).ActiveStrategies("code")
+					require.NoError(t, err)
+					f, err := recovery.NewFlow(conf, time.Hour, "", u, s, flow.TypeBrowser)
+					require.NoError(t, err)
+
+					require.NoError(t, reg.RecoveryFlowPersister().CreateRecoveryFlow(ctx, f))
+
+					err = reg.CodeSender().SendRecoveryCode(ctx, f, "email", "not-tracked@ory.sh", nil)
+					require.ErrorIs(t, err, code.ErrUnknownAddress)
+				},
+			},
+			{
+				flow:      "verification",
+				configKey: config.ViperKeySelfServiceVerificationNotifyUnknownRecipients,
+				send: func(t *testing.T) {
+					s, _, err := reg.VerificationStrategies(ctx).ActiveStrategies("code")
+					require.NoError(t, err)
+					f, err := verification.NewFlow(conf, time.Hour, "", u, s, flow.TypeBrowser)
+					require.NoError(t, err)
+
+					require.NoError(t, reg.VerificationFlowPersister().CreateVerificationFlow(ctx, f))
+
+					err = reg.CodeSender().SendVerificationCode(ctx, f, "email", "not-tracked@ory.sh")
+					require.ErrorIs(t, err, code.ErrUnknownAddress)
+				},
+			},
+		} {
+			t.Run("strategy="+tc.flow, func(t *testing.T) {
+				conf.MustSet(ctx, tc.configKey, false)
+
+				t.Cleanup(func() {
+					conf.MustSet(ctx, tc.configKey, true)
+				})
+
+				tc.send(t)
+
+				messages, err := reg.CourierPersister().NextMessages(ctx, 0)
+
+				require.ErrorIs(t, err, courier.ErrQueueEmpty)
+				require.Len(t, messages, 0)
+			})
+		}
+	})
+}

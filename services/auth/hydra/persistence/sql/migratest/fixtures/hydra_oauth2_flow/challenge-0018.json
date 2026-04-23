@@ -1,0 +1,51 @@
+{
+  "i": "challenge-0018",
+  "n": "24704dcb-0ab9-4bfa-a84c-405932ae53fe",
+  "rs": [
+    "requested_scope-0018_1",
+    "requested_scope-0018_2"
+  ],
+  "ra": [
+    "requested_audience-0018_1",
+    "requested_audience-0018_2"
+  ],
+  "s": "subject-0018",
+  "oc": {
+    "display": "display-0018"
+  },
+  "ci": "client-21",
+  "r": "http://request/0018",
+  "ia": "2022-02-15T22:20:21Z",
+  "a": "acr-0018",
+  "am": [
+    "amr-0018-1",
+    "amr-0018-2"
+  ],
+  "ct": {
+    "context": "0018"
+  },
+  "la": null,
+  "di": "device-challenge-0018",
+  "dr": "device-request-id-0018",
+  "dh": null,
+  "cc": "challenge-0018",
+  "cs": true,
+  "gs": [
+    "granted_scope-0018_1",
+    "granted_scope-0018_2"
+  ],
+  "ga": [
+    "granted_audience-0018_1",
+    "granted_audience-0018_2"
+  ],
+  "ce": true,
+  "cf": 15,
+  "ch": "2025-05-16T12:24:00Z",
+  "cx": null,
+  "st": {
+    "session_id_token-0018": "0018"
+  },
+  "sa": {
+    "session_access_token-0018": "0018"
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "$id": "https://schemas.ory.sh/kratos/selfservice/strategy/profile/recovery.schema.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "method": {
+      "type": "string"
+    },
+    "code": {
+      "type": "string"
+    },
+    "email": {
+      "type": "string",
+      "format": "email"
+    },
+    "recovery_address": {
+      "type": "string"
+    },
+    "recovery_select_address": {
+      "type": "string"
+    },
+    "recovery_confirm_address": {
+      "type": "string"
+    },
+    "screen": {
+      "type": "string"
+    },
+    "flow": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "csrf_token": {
+      "type": "string"
+    },
+    "transient_payload": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}

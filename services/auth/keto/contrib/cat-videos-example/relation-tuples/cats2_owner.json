@@ -1,0 +1,10 @@
+{
+  "namespace": "Video",
+  "object": "/cats/2.mp4",
+  "relation": "owner",
+  "subject_set": {
+    "namespace": "Video",
+    "object": "/cats",
+    "relation": "owner"
+  }
+}

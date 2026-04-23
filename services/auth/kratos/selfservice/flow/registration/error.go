@@ -1,0 +1,199 @@
+// Copyright © 2023 Ory Corp
+// SPDX-License-Identifier: Apache-2.0
+
+package registration
+
+import (
+	"net/http"
+
+	"github.com/gofrs/uuid"
+	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/ory/x/httpx"
+	"github.com/ory/x/logrusx"
+	"github.com/ory/x/otelx"
+
+	"go.opentelemetry.io/otel/trace"
+
+	"github.com/ory/kratos/hydra"
+	"github.com/ory/kratos/identity"
+	"github.com/ory/kratos/schema"
+	"github.com/ory/kratos/selfservice/sessiontokenexchange"
+	"github.com/ory/kratos/ui/node"
+	"github.com/ory/kratos/x/events"
+
+	"github.com/ory/kratos/selfservice/flow"
+	"github.com/ory/kratos/text"
+
+	"github.com/pkg/errors"
+
+	"github.com/ory/herodot"
+	"github.com/ory/kratos/driver/config"
+	"github.com/ory/kratos/selfservice/errorx"
+	"github.com/ory/kratos/x"
+)
+
+var (
+	ErrHookAbortFlow        = errors.New("aborted registration hook execution")
+	ErrAlreadyLoggedIn      = herodot.ErrBadRequest.WithID(text.ErrIDAlreadyLoggedIn).WithError("you are already logged in").WithReason("A valid session was detected and thus registration is not possible.")
+	ErrRegistrationDisabled = herodot.ErrBadRequest.WithID(text.ErrIDSelfServiceFlowDisabled).WithError("registration flow disabled").WithReason("Registration is not allowed because it was disabled.")
+)
+
+type (
+	errorHandlerDependencies interface {
+		errorx.ManagementProvider
+		httpx.WriterProvider
+		logrusx.Provider
+		otelx.Provider
+		config.Provider
+		hydra.Provider
+
+		sessiontokenexchange.PersistenceProvider
+		FlowPersistenceProvider
+		HandlerProvider
+	}
+
+	ErrorHandlerProvider interface{ RegistrationFlowErrorHandler() *ErrorHandler }
+
+	ErrorHandler struct {
+		d errorHandlerDependencies
+	}
+)
+
+func NewErrorHandler(d errorHandlerDependencies) *ErrorHandler {
+	return &ErrorHandler{d: d}
+}
+
+func (s *ErrorHandler) PrepareReplacementForExpiredFlow(w http.ResponseWriter, r *http.Request, f *Flow, err error) (*flow.ExpiredError, error) {
+	errExpired := new(flow.ExpiredError)
+	if !errors.As(err, &errExpired) {
+		return nil, nil
+	}
+	// create new flow because the old one is not valid
+	newFlow, err := s.d.RegistrationHandler().FromOldFlow(w, r, *f)
+	if err != nil {
+		return nil, err
+	}
+
+	newFlow.UI.Messages.Add(text.NewErrorValidationRegistrationFlowExpired(errExpired.ExpiredAt))
+	if err := s.d.RegistrationFlowPersister().UpdateRegistrationFlow(r.Context(), newFlow); err != nil {
+		return nil, err
+	}
+
+	return errExpired.WithFlow(newFlow), nil
+}
+
+func (s *ErrorHandler) WriteFlowError(
+	w http.ResponseWriter,
+	r *http.Request,
+	f *Flow,
+	ct identity.CredentialsType,
+	group node.UiNodeGroup,
+	err error,
+) {
+	ctx, span := s.d.Tracer(r.Context()).Tracer().Start(r.Context(), "selfservice.flow.registration.ErrorHandler.WriteFlowError",
+		trace.WithAttributes(
+			attribute.String("error", err.Error()),
+		))
+	r = r.WithContext(ctx)
+	defer otelx.End(span, &err)
+
+	if dup := new(identity.ErrDuplicateCredentials); errors.As(err, &dup) {
+		err = schema.NewDuplicateCredentialsError(dup)
+	}
+
+	logger := s.d.Logger().
+		WithError(err).
+		WithRequest(r).
+		WithField("registration_flow", f.ToLoggerField())
+
+	logger.Info("Encountered self-service flow error.")
+
+	if f == nil {
+		trace.SpanFromContext(r.Context()).AddEvent(events.NewRegistrationFailed(r.Context(), uuid.Nil, "", "", err))
+		s.forward(w, r, nil, err)
+		return
+	}
+	span.SetAttributes(attribute.String("flow_id", f.ID.String()))
+	trace.SpanFromContext(r.Context()).AddEvent(events.NewRegistrationFailed(r.Context(), f.ID, string(f.Type), ct.String(), err))
+
+	if expired, inner := s.PrepareReplacementForExpiredFlow(w, r, f, err); inner != nil {
+		s.forward(w, r, f, err)
+		return
+	} else if expired != nil {
+		if f.Type == flow.TypeAPI || x.IsJSONRequest(r) {
+			s.d.Writer().WriteError(w, r, expired)
+		} else {
+			http.Redirect(w, r, expired.GetFlow().AppendTo(s.d.Config().SelfServiceFlowRegistrationUI(r.Context())).String(), http.StatusSeeOther)
+		}
+		return
+	}
+
+	f.UI.ResetMessages()
+	if err := f.UI.ParseError(group, err); err != nil {
+		s.forward(w, r, f, err)
+		return
+	}
+
+	ds, err := f.IdentitySchema.URL(r.Context(), s.d.Config())
+	if err != nil {
+		s.forward(w, r, f, err)
+		return
+	}
+
+	if err := SortNodes(r.Context(), f.UI.Nodes, ds.String()); err != nil {
+		s.forward(w, r, f, err)
+		return
+	}
+
+	if err := s.d.RegistrationFlowPersister().UpdateRegistrationFlow(r.Context(), f); err != nil {
+		s.forward(w, r, f, err)
+		return
+	}
+
+	if f.Type == flow.TypeBrowser && !x.IsJSONRequest(r) {
+		http.Redirect(w, r, f.AppendTo(s.d.Config().SelfServiceFlowRegistrationUI(r.Context())).String(), http.StatusFound)
+		return
+	}
+	if _, hasCode, _ := s.d.SessionTokenExchangePersister().CodeForFlow(r.Context(), f.ID); group == node.OpenIDConnectGroup && f.Type == flow.TypeAPI && hasCode {
+		http.Redirect(w, r, f.ReturnTo, http.StatusSeeOther)
+		return
+	}
+
+	updatedFlow, innerErr := s.d.RegistrationFlowPersister().GetRegistrationFlow(r.Context(), f.ID)
+	if innerErr != nil {
+		s.forward(w, r, updatedFlow, innerErr)
+		return
+	}
+
+	// If the flow has an OAuth2LoginChallenge, we try to fetch the login request from Hydra because we return the flow object as JSON.
+	if updatedFlow.OAuth2LoginChallenge != "" {
+		hlr, err := s.d.Hydra().GetLoginRequest(ctx, string(updatedFlow.OAuth2LoginChallenge))
+		if err != nil {
+			// We don't redirect back to the third party on errors because Hydra doesn't
+			// give us the 3rd party return_uri when it redirects to the login UI.
+			s.forward(w, r, updatedFlow, err)
+			return
+		}
+		updatedFlow.HydraLoginRequest = hlr
+	}
+
+	s.d.Writer().WriteCode(w, r, x.RecoverStatusCode(err, http.StatusBadRequest), updatedFlow)
+}
+
+func (s *ErrorHandler) forward(w http.ResponseWriter, r *http.Request, rr *Flow, err error) {
+	if rr == nil {
+		if x.IsJSONRequest(r) {
+			s.d.Writer().WriteError(w, r, err)
+			return
+		}
+		s.d.SelfServiceErrorManager().Forward(r.Context(), w, r, err)
+		return
+	}
+
+	if rr.Type == flow.TypeAPI {
+		s.d.Writer().WriteErrorCode(w, r, x.RecoverStatusCode(err, http.StatusBadRequest), err)
+	} else {
+		s.d.SelfServiceErrorManager().Forward(r.Context(), w, r, err)
+	}
+}

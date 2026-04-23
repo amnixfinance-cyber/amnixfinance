@@ -1,0 +1,32 @@
+{
+  "ID": "sig-20201110104000",
+  "NID": "24704dcb-0ab9-4bfa-a84c-405932ae53fe",
+  "Request": "req-20201110104000",
+  "ConsentChallenge": {
+    "String": "challenge-0014",
+    "Valid": true
+  },
+  "RequestedAt": "2022-02-15T22:20:22Z",
+  "Client": "client-0001",
+  "Scopes": "scope-0011",
+  "GrantedScope": "granted_scope-0011",
+  "RequestedAudience": "requested_audience-0011",
+  "GrantedAudience": "granted_audience-0011",
+  "Form": "form_data-0011",
+  "Subject": "subject-0011",
+  "Active": false,
+  "Session": "c2Vzc2lvbi0wMDEx",
+  "Table": "",
+  "FirstUsedAt": {
+    "Time": "0001-01-01T00:00:00Z",
+    "Valid": false
+  },
+  "AccessTokenSignature": {
+    "String": "",
+    "Valid": false
+  },
+  "UsedTimes": {
+    "Int32": 0,
+    "Valid": false
+  }
+}

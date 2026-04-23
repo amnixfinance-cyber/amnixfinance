@@ -1,0 +1,233 @@
+name: CI Tasks for Ory Hydra
+on:
+  push:
+    branches:
+      - master
+    tags:
+      - "*"
+  pull_request:
+  merge_group:
+
+# Cancel in-progress runs in current workflow.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  oidc-conformity:
+    name: Run OIDC conformity tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: ory/ci/checkout@master
+        with:
+          # We must fetch at least the immediate parents so that if this is
+          # a pull request then we can checkout the head.
+          fetch-depth: 2
+      - uses: actions/setup-go@v6
+        with:
+          check-latest: true
+          go-version-file: go.mod
+      - name: Start service
+        run: ./test/conformance/start.sh
+      - name: Run tests
+        run: ./test/conformance/test.sh -v -short -parallel 16
+
+  test:
+    name: Run tests and lints
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: postgres
+          POSTGRES_PASSWORD: secret
+          POSTGRES_USER: postgres
+        ports:
+          - 5432:5432
+      mysql:
+        image: mysql:9.6
+        env:
+          MYSQL_ROOT_PASSWORD: secret
+        ports:
+          - 3306:3306
+    env:
+      TEST_DATABASE_POSTGRESQL: "postgres://postgres:secret@localhost:5432/postgres?sslmode=disable"
+      TEST_DATABASE_MYSQL: "mysql://root:secret@(localhost:3306)/mysql?multiStatements=true&parseTime=true"
+      TEST_DATABASE_COCKROACHDB: "cockroach://root@localhost:26257/defaultdb?sslmode=disable"
+    steps:
+      - run: |
+          docker create --name cockroach -p 26257:26257 \
+            cockroachdb/cockroach:latest-v25.4 start-single-node --insecure
+          docker start cockroach
+        name: Start CockroachDB
+      - uses: ory/ci/checkout@master
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-go@v6
+        with:
+          check-latest: true
+          go-version-file: go.mod
+      - run: go list -json > go.list
+      - name: Run nancy
+        uses: sonatype-nexus-community/nancy-github-action@v1.0.3
+        with:
+          nancyVersion: v1.0.42
+      - name: Run golangci-lint
+        if: ${{ github.ref_type != 'tag' }}
+        uses: golangci/golangci-lint-action@v9
+        env:
+          GOGC: 100
+        with:
+          args: --timeout 10m0s
+          version: latest
+          only-new-issues: "true"
+      - name: Run go tests
+        run: |
+          go test -coverprofile coverage.out -failfast -timeout=20m -tags sqlite,sqlite_omit_load_extension ./...
+      - name: Submit to Codecov
+        run: |
+          bash <(curl -s https://codecov.io/bash)
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  test-hsm:
+    name: Run HSM tests
+    runs-on: ubuntu-latest
+    env:
+      HSM_ENABLED: true
+      HSM_LIBRARY: /usr/lib/softhsm/libsofthsm2.so
+      HSM_TOKEN_LABEL: hydra
+      HSM_PIN: 1234
+    steps:
+      - uses: ory/ci/checkout@master
+      - uses: actions/setup-go@v6
+        with:
+          check-latest: true
+          go-version-file: go.mod
+      - name: Setup HSM libs and packages
+        run: |
+          sudo apt install -y softhsm2 opensc
+          sudo rm -rf /var/lib/softhsm/tokens
+          sudo mkdir -p /var/lib/softhsm/tokens
+          sudo chmod -R a+rwx /var/lib/softhsm
+          sudo chmod a+rx /etc/softhsm
+          sudo chmod a+r /etc/softhsm/*
+      - name: HSM tests
+        run: |
+          pkcs11-tool --module /usr/lib/softhsm/libsofthsm2.so --slot 0 --init-token --so-pin 0000 --init-pin --pin 1234 --label hydra
+          go test -p 1 -failfast -short -timeout=20m -tags=sqlite,hsm ./...
+
+  test-e2e:
+    name: Run end-to-end tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        database: ["memory", "postgres", "mysql", "cockroach"]
+        args: ["", "--jwt"]
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: postgres
+          POSTGRES_PASSWORD: test
+          POSTGRES_USER: test
+        ports:
+          - 5432:5432
+      mysql:
+        image: mysql:9.6
+        env:
+          MYSQL_ROOT_PASSWORD: test
+        ports:
+          - 3306:3306
+    env:
+      TEST_DATABASE_POSTGRESQL: "postgres://test:test@localhost:5432/postgres?sslmode=disable"
+      TEST_DATABASE_MYSQL: "mysql://root:test@(localhost:3306)/mysql?multiStatements=true&parseTime=true"
+      TEST_DATABASE_COCKROACHDB: "cockroach://root@localhost:26257/defaultdb?sslmode=disable"
+    steps:
+      - run: |
+          docker create --name cockroach -p 26257:26257 \
+            cockroachdb/cockroach:latest-v25.4 start-single-node --insecure
+          docker start cockroach
+        name: Start CockroachDB
+      - uses: ory/ci/checkout@master
+      - uses: actions/setup-go@v6
+        with:
+          check-latest: true
+          go-version-file: go.mod
+      - uses: actions/cache@v5
+        with:
+          path: ./test/e2e/hydra
+          key: ${{ runner.os }}-hydra
+      - run: ./test/e2e/circle-ci.bash ${{ matrix.database }} ${{ matrix.args }}
+
+  docs-cli:
+    runs-on: ubuntu-latest
+    name: Build CLI docs
+    needs:
+      - test
+    steps:
+      - uses: ory/ci/docs/cli-next@master
+        with:
+          token: ${{ secrets.ORY_BOT_PAT }}
+          output-dir: docs/hydra/cli
+
+  release:
+    name: Generate release
+    runs-on: ubuntu-latest
+    if: ${{ github.ref_type == 'tag' }}
+    needs:
+      - oidc-conformity
+      - test
+      - test-hsm
+      - test-e2e
+    steps:
+      - uses: ory/ci/releaser@master
+        with:
+          token: ${{ secrets.ORY_BOT_PAT }}
+          goreleaser_key: ${{ secrets.GORELEASER_KEY }}
+          cosign_pwd: ${{ secrets.COSIGN_PWD }}
+          docker_username: ${{ secrets.DOCKERHUB_USERNAME }}
+          docker_password: ${{ secrets.DOCKERHUB_PASSWORD }}
+
+  newsletter-draft:
+    name: Draft newsletter
+    runs-on: ubuntu-latest
+    if: ${{ github.ref_type == 'tag' }}
+    needs:
+      - release
+    steps:
+      - uses: ory/ci/newsletter@master
+        with:
+          mailchimp_list_id: f605a41b53
+          mailchmip_segment_id: 6479481
+          mailchimp_api_key: ${{ secrets.MAILCHIMP_API_KEY }}
+          draft: "true"
+          ssh_key: ${{ secrets.ORY_BOT_SSH_KEY }}
+
+  slack-approval-notification:
+    name: Pending approval Slack notification
+    runs-on: ubuntu-latest
+    if: ${{ github.ref_type == 'tag' }}
+    needs:
+      - newsletter-draft
+    steps:
+      - uses: ory/ci/newsletter/slack-notify@master
+        with:
+          slack-webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  newsletter-send:
+    name: Send newsletter
+    runs-on: ubuntu-latest
+    needs:
+      - newsletter-draft
+    if: ${{ github.ref_type == 'tag' }}
+    environment: production
+    steps:
+      - uses: ory/ci/newsletter@master
+        with:
+          mailchimp_list_id: f605a41b53
+          mailchmip_segment_id: 6479481
+          mailchimp_api_key: ${{ secrets.MAILCHIMP_API_KEY }}
+          draft: "false"
+          ssh_key: ${{ secrets.ORY_BOT_SSH_KEY }}

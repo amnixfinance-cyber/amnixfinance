@@ -1,0 +1,36 @@
+{
+  "$id": "https://schemas.ory.sh/kratos/selfservice/strategy/code/login.schema.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "method": {
+      "type": "string"
+    },
+    "code": {
+      "type": "string"
+    },
+    "identifier": {
+      "type": "string"
+    },
+    "address": {
+      "type": "string"
+    },
+    "resend": {
+      "type": "string",
+      "enum": [
+        "code"
+      ]
+    },
+    "flow": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "csrf_token": {
+      "type": "string"
+    },
+    "transient_payload": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}
