@@ -101,8 +101,8 @@ jobs:
       - name: "[C] processing — lint & template"
         run: |
           echo "━━━ processing ━━━"
-          helm lint services/processing/k8s/ --set tags.minio=true --set stateStore.minio.enabled=true
-          helm template amnix-processing services/processing/k8s/ --set tags.minio=true --set stateStore.minio.enabled=true > /dev/null
+          helm lint services/processing/k8s/ --set tags.minio=true --set stateStore.minio.enabled=true --set metaStore.sqlite.enabled=true
+          helm template amnix-processing services/processing/k8s/ --set tags.minio=true --set stateStore.minio.enabled=true --set metaStore.sqlite.enabled=true > /dev/null
           echo "✅ processing — OK"
 
       # ── Group D: auth (kratos) — file:// dep مفقود ──
@@ -198,7 +198,7 @@ jobs:
         run: |
           echo "━━━ processing ━━━"
           helm template amnix-processing services/processing/k8s/ \
-            --set tags.minio=true --set stateStore.minio.enabled=true \
+            --set tags.minio=true --set stateStore.minio.enabled=true --set metaStore.sqlite.enabled=true \
             --show-only templates/networkpolicy.yaml \
             --show-only templates/scaledobject.yaml \
             --show-only templates/serviceaccount.yaml \
