@@ -7,8 +7,7 @@ deployment:
   # -- Number of Replicas for the Redpanda Connect Deployment.
   replicaCount: 1
   # -- Annotations to add to Redpanda Connect Pods.
-  podAnnotations:
-    linkerd.io/inject: enabled
+  podAnnotations: {}
   podLabels: {}
   # -- Set Annotations on the Redpanda Connect Deployment.
   annotations: {}
