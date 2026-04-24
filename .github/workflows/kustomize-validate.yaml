@@ -34,11 +34,10 @@ jobs:
             echo "✅ $svc — OK"
           done
 
-      - name: "[B] auth — validate 4 templates (--skip-deps)"
+      - name: "[B] auth — validate 4 templates"
         run: |
           echo "━━━ auth ━━━"
           helm template amnix-auth services/auth/k8s/ \
-            --skip-deps \
             --show-only templates/networkpolicy.yaml \
             --show-only templates/scaledobject.yaml \
             --show-only templates/serviceaccount.yaml \
