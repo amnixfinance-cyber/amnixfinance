@@ -57,6 +57,9 @@ jobs:
         run: |
           echo "━━━ processing ━━━"
           helm template amnix-processing services/processing/k8s/ \
+            --set stateStore.localFs.enabled=true \
+            --set metaStore.sqlite.enabled=true \
+            --set standalone.enabled=true \
             --show-only templates/networkpolicy.yaml \
             --show-only templates/scaledobject.yaml \
             --show-only templates/serviceaccount.yaml \
