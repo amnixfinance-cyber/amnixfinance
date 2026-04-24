@@ -1,0 +1,60 @@
+name: Helm Lint & Template
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  helm-validate:
+    name: Helm Lint & Template
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Helm
+        uses: Azure/setup-helm@v5.0.0
+
+      - name: "[A] Custom charts — lint & template"
+        run: |
+          for svc in billing analytics search notifications; do
+            echo "━━━ $svc ━━━"
+            helm lint services/$svc/k8s/ --strict
+            helm template amnix-$svc services/$svc/k8s/ > /dev/null
+            echo "✅ $svc — OK"
+          done
+
+      - name: "[B] Upstream standalone — lint & template"
+        run: |
+          for svc in ingestion realtime; do
+            echo "━━━ $svc ━━━"
+            helm lint services/$svc/k8s/
+            helm template amnix-$svc services/$svc/k8s/ > /dev/null
+            echo "✅ $svc — OK"
+          done
+
+      - name: "[C] Add bitnami repo for processing"
+        run: |
+          helm repo add bitnami https://charts.bitnami.com/bitnami
+          helm repo update
+
+      - name: "[C] Update processing dependencies"
+        run: helm dependency update services/processing/k8s/
+
+      - name: "[C] processing — lint & template"
+        run: |
+          helm lint services/processing/k8s/
+          helm template amnix-processing services/processing/k8s/ > /dev/null
+          echo "✅ processing — OK"
+
+      - name: "[D] auth — lint & template (--skip-deps)"
+        run: |
+          helm lint services/auth/k8s/ --skip-deps
+          helm template amnix-auth services/auth/k8s/ --skip-deps > /dev/null
+          echo "✅ auth — OK"

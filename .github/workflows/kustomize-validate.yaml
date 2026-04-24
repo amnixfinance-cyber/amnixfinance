@@ -1,0 +1,35 @@
+name: Kustomize Validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  kustomize-validate:
+    name: Kustomize Validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install kustomize v5.4.3
+        run: |
+          curl -sLo /tmp/kustomize.tar.gz \
+            "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.4.3/kustomize_v5.4.3_linux_amd64.tar.gz"
+          tar -xzf /tmp/kustomize.tar.gz -C /tmp/
+          sudo mv /tmp/kustomize /usr/local/bin/kustomize
+          kustomize version
+
+      - name: Validate kustomizations — all 8 services
+        run: |
+          for svc in auth billing ingestion processing realtime analytics search notifications; do
+            echo "━━━ $svc ━━━"
+            kustomize build services/$svc/k8s/ > /dev/null
+            echo "✅ $svc — OK"
+          done
