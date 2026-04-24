@@ -1,0 +1,26 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/amnixfinance-cyber/notifications
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8084
+
+resend:
+  apiKey: ""
+  fromEmail: "noreply@amnixfinance.com"
+
+centrifugo:
+  url: "http://centrifugo:8000"
+  apiKey: ""
+
+resources:
+  requests:
+    memory: "128Mi"
+    cpu: "100m"
+  limits:
+    memory: "256Mi"
+    cpu: "200m"
