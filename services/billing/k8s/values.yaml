@@ -28,3 +28,9 @@ podAnnotations:
 securityContext:
   allowPrivilegeEscalation: false
   runAsNonRoot: true
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  scheme: http
+  basicAuth: {}
+  tlsConfig: {}
