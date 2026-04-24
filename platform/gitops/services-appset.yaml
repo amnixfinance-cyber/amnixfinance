@@ -1,0 +1,66 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: amnixfinance-services
+  namespace: argocd
+spec:
+  generators:
+  - list:
+      elements:
+      - name: auth
+        namespace: auth
+        chartPath: services/auth/k8s
+        syncWave: "2"
+      - name: ingestion
+        namespace: ingestion
+        chartPath: services/ingestion/k8s
+        syncWave: "2"
+      - name: processing
+        namespace: processing
+        chartPath: services/processing/k8s
+        syncWave: "2"
+      - name: realtime
+        namespace: realtime
+        chartPath: services/realtime/k8s
+        syncWave: "2"
+      - name: analytics
+        namespace: analytics
+        chartPath: services/analytics/k8s
+        syncWave: "2"
+      - name: search
+        namespace: search
+        chartPath: services/search/k8s
+        syncWave: "2"
+      - name: billing
+        namespace: billing
+        chartPath: services/billing/k8s
+        syncWave: "2"
+      - name: notifications
+        namespace: notifications
+        chartPath: services/notifications/k8s
+        syncWave: "2"
+  template:
+    metadata:
+      name: '{{name}}'
+      namespace: argocd
+      annotations:
+        argocd.argoproj.io/sync-wave: '{{syncWave}}'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/amnixfinance-cyber/amnixfinance.git
+        targetRevision: HEAD
+        path: '{{chartPath}}'
+        helm:
+          valueFiles:
+          - values.yaml
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{namespace}}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+        - CreateNamespace=true
+        - ServerSideApply=true
