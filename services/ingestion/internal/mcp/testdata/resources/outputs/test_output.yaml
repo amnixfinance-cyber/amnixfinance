@@ -1,7 +1,0 @@
-label: test-output
-drop: {}
-meta:
-  tags: [test]
-  mcp:
-    enabled: true
-    description: "Test output that drops messages"

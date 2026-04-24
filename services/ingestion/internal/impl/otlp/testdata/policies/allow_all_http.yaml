@@ -1,9 +1,0 @@
-roles:
-  - id: otlp.admin
-    permissions:
-      - dataplane_pipeline_otlp_http_invoke
-
-bindings:
-  - role: otlp.admin
-    principal: User:test@example.com
-    scope: organizations/test-org/resourcegroups/default/dataplane/otlp-http

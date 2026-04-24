@@ -1,1 +1,0 @@
-create unique index {{ if not .Transactional }}concurrently{{end}} transactions_reference2 on "{{.Schema}}".transactions (ledger, reference) where reference <> '';

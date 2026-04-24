@@ -1,9 +1,0 @@
-# V2GetExporterStateResponse
-
-
-## Fields
-
-| Field                                                                                           | Type                                                                                            | Required                                                                                        | Description                                                                                     |
-| ----------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `HTTPMeta`                                                                                      | [components.HTTPMetadata](../../models/components/httpmetadata.md)                              | :heavy_check_mark:                                                                              | N/A                                                                                             |
-| `V2GetExporterStateResponse`                                                                    | [*components.V2GetExporterStateResponse](../../models/components/v2getexporterstateresponse.md) | :heavy_minus_sign:                                                                              | Exporter information                                                                            |
