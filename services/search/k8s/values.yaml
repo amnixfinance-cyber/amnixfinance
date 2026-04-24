@@ -2258,6 +2258,7 @@ runtime_overrides:
 
 # Pass any annotations to Weaviate pods
 annotations:
+  linkerd.io/inject: enabled
 
 extraVolumeMounts:
 

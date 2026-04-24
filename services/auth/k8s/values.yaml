@@ -34,3 +34,6 @@ kratos:
     limits:
       cpu: 500m
       memory: 512Mi
+
+podAnnotations:
+  linkerd.io/inject: enabled

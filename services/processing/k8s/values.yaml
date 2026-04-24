@@ -221,6 +221,7 @@ standalone:
   ## @param standalone.podAnnotations Annotations to add to the component pods.
   ##
   podAnnotations: { }
+  linkerd.io/inject: enabled
 
   ## @param standalone.extraEnvVars Extra environment variables to add to the component pods.
   ##
@@ -739,6 +740,7 @@ metaComponent:
   ## @param metaComponent.podAnnotations Annotations to add to the component pods.
   ##
   podAnnotations: { }
+  linkerd.io/inject: enabled
 
   ## @param metaComponent.extraEnvVars Extra environment variables to add to the component pods.
   ##
@@ -881,6 +883,7 @@ frontendComponent:
   ## @param frontendComponent.podAnnotations Annotations to add to the component pods.
   ##
   podAnnotations: { }
+  linkerd.io/inject: enabled
 
   ## @param frontendComponent.extraEnvVars Extra environment variables to add to the component pods.
   ##
@@ -1025,6 +1028,7 @@ computeComponent:
   ## @param computeComponent.podAnnotations Annotations to add to the component pods.
   ##
   podAnnotations: { }
+  linkerd.io/inject: enabled
 
   ## @param computeComponent.extraEnvVars Extra environment variables to add to the component pods.
   ##
@@ -1192,6 +1196,7 @@ compactorComponent:
   ## @param compactorComponent.podAnnotations Annotations to add to the component pods.
   ##
   podAnnotations: { }
+  linkerd.io/inject: enabled
 
   ## @param compactorComponent.extraEnvVars Extra environment variables to add to the component pods.
   ##

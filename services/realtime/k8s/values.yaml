@@ -335,7 +335,8 @@ annotations: {}
 # POD-LEVEL CONFIGURATION
 # ============================================
 
-podAnnotations: {}
+podAnnotations:
+  linkerd.io/inject: enabled
 podLabels: {}
 
 priorityClassName: ""

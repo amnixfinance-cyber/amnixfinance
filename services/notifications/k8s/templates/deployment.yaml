@@ -15,6 +15,7 @@ spec:
       labels:
         app: notification-controller
       annotations:
+        linkerd.io/inject: enabled
         prometheus.io/scrape: "true"
         prometheus.io/port: "9095"
     spec:

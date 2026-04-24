@@ -217,7 +217,8 @@ server:
   # -- Pod's additional labels
   podLabels: {}
   # -- Pod's annotations
-  podAnnotations: {}
+  podAnnotations:
+  linkerd.io/inject: enabled
 
   # -- Resource object. Details are [here](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/)
   resources:
