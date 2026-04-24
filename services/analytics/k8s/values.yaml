@@ -258,6 +258,8 @@ server:
   # -- Security context to be added to server pods
   securityContext:
     enabled: true
+    allowPrivilegeEscalation: false
+    runAsNonRoot: true
   # -- Pod's security context. Details are [here](https://kubernetes.io/docs/tasks/configure-pod-container/security-context/)
   podSecurityContext:
     enabled: true

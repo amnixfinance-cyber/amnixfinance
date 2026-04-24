@@ -37,3 +37,7 @@ kratos:
 
 podAnnotations:
   linkerd.io/inject: enabled
+
+securityContext:
+  allowPrivilegeEscalation: false
+  runAsNonRoot: true
