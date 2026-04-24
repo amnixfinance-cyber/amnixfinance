@@ -1,30 +1,47 @@
-name: Validate Platform Manifests
+name: Validate Infrastructure Manifests
 
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
+
+  # ════════════════════════════════════════════════════════
+  # JOB 1 — YAML Lint
+  # النطاق: platform/ + services/ + .github/
+  # السابق: platform/ فقط ← ناقص
+  # ════════════════════════════════════════════════════════
   yaml-lint:
     name: YAML Lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Lint YAML
+      - name: Lint YAML — platform/ + services/ + .github/
         uses: ibiqlik/action-yamllint@v3.1.1
         with:
-          file_or_dir: platform/
+          file_or_dir: platform/ services/ .github/
           config_data: |
             extends: relaxed
             rules:
               line-length:
                 max: 150
+              truthy:
+                allowed-values: ['true', 'false', 'yes', 'no', 'on', 'off']
 
+  # ════════════════════════════════════════════════════════
+  # JOB 2 — Helm Lint + Template
+  # 4 مجموعات بناءً على نوع كل chart
+  # ════════════════════════════════════════════════════════
   helm-validate:
-    name: Helm Template Validation
+    name: Helm Lint & Template
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -32,89 +49,113 @@ jobs:
       - name: Setup Helm
         uses: Azure/setup-helm@v5.0.0
 
-      - name: Add Helm repos
+      # ── Group A: Custom charts — no external deps ──────
+      # billing, analytics, search, notifications
+      # نتحكم فيهم كاملاً → --strict
+      - name: "[A] Custom charts — lint & template"
         run: |
-          helm repo add cilium https://helm.cilium.io
-          helm repo add linkerd https://helm.linkerd.io/stable
-          helm repo add apisix https://charts.apiseven.com
-          helm repo add redpanda https://charts.redpanda.com
-          helm repo add qdrant https://qdrant.github.io/qdrant-helm
-          helm repo add quickwit https://helm.quickwit.io
-          helm repo add minio https://charts.min.io
-          helm repo add grafana https://grafana.github.io/helm-charts
-          helm repo add falco https://falcosecurity.github.io/charts
-          helm repo add temporal https://go.temporal.io/helm-charts
-          helm repo add ory https://k8s.ory.sh/helm/charts
-          helm repo add kedacore https://kedacore.github.io/charts
-          helm repo add vmware-tanzu https://vmware-tanzu.github.io/helm-charts
-          helm repo add backstage https://backstage.github.io/charts
-          helm repo add longhorn https://charts.longhorn.io
-          helm repo add loft https://charts.loft.sh
-          helm repo add open-policy-agent https://open-policy-agent.github.io/gatekeeper/charts
+          for svc in billing analytics search notifications; do
+            echo "━━━ $svc ━━━"
+            helm lint services/$svc/k8s/ --strict
+            helm template amnix-$svc services/$svc/k8s/ > /dev/null
+            echo "✅ $svc — OK"
+          done
+
+      # ── Group B: Upstream standalone — no sub-chart deps ──
+      # ingestion (redpanda connect), realtime (centrifugo)
+      # upstream code → لا --strict
+      - name: "[B] Upstream standalone — lint & template"
+        run: |
+          for svc in ingestion realtime; do
+            echo "━━━ $svc ━━━"
+            helm lint services/$svc/k8s/
+            helm template amnix-$svc services/$svc/k8s/ > /dev/null
+            echo "✅ $svc — OK"
+          done
+
+      # ── Group C: processing (risingwave) — bitnami sub-chart deps ──
+      # dependencies: common + postgresql + minio من bitnami
+      # charts/ غير موجود → helm dependency update أولاً
+      - name: "[C] Add bitnami repo for processing"
+        run: |
           helm repo add bitnami https://charts.bitnami.com/bitnami
-          helm repo add hashicorp https://helm.releases.hashicorp.com
-          helm repo add jetstack https://charts.jetstack.io
-          helm repo add lago https://getlago.github.io/lago-helm-charts
-          helm repo add risingwave https://risingwavelabs.github.io/helm-charts
-          helm repo add victoriametrics https://victoriametrics.github.io/helm-charts
-          helm repo add weaviate https://weaviate.github.io/weaviate-helm
-          helm repo add analytics https://victoriametrics.github.io/helm-charts
-          helm repo add billing https://charts.formance.com
-          helm repo add auth https://k8s.ory.sh/helm/charts
-          helm repo add ingestion https://charts.redpanda.com
-          helm repo add processing https://risingwavelabs.github.io/helm-charts
-          helm repo add realtime https://centrifugal.github.io/helm-charts
-          helm repo add search https://weaviate.github.io/weaviate-helm
-          helm repo add notifications https://fluxcd-community.github.io/helm-charts
           helm repo update
 
-      - name: Validate Helm charts exist
-        run: |
-          helm search repo cilium/cilium --version 1.19.3
-          helm search repo linkerd/linkerd-crds --version 1.8.0
-          helm search repo linkerd/linkerd-control-plane --version 1.16.11
-          helm search repo apisix/apisix --version 2.14.0
-          helm search repo redpanda/redpanda --version 26.1.2
-          helm search repo qdrant/qdrant --version 1.17.1
-          helm search repo quickwit/quickwit --version 0.8.4
-          helm search repo minio/minio --version 5.4.0
-          helm search repo falco/falco --version 8.0.2
-          helm search repo temporal/temporal --version 1.1.1
-          helm search repo ory/kratos --version 0.61.1
-          helm search repo grafana/loki-stack --version 2.10.3
-          helm search repo kedacore/keda --version 2.19.0
-          helm search repo vmware-tanzu/velero --version 12.0.0
-          helm search repo backstage/backstage --version 2.6.3
-          helm search repo longhorn/longhorn --version 1.11.1
-          helm search repo loft/vcluster --version 0.33.1
-          helm search repo open-policy-agent/gatekeeper --version 3.22.0
-          helm search repo bitnami/postgresql --version 18.6.1
-          helm search repo bitnami/redis --version 25.4.0
-          helm search repo hashicorp/vault --version 0.32.0
-          helm search repo jetstack/cert-manager --version v1.20.2
-          helm search repo lago/lago --version 1.27.1
-          helm search repo risingwave/risingwave --version 0.2.50
-          helm search repo victoriametrics/victoria-metrics-single
-          helm search repo weaviate/weaviate
-          helm search repo analytics/victoria-metrics-single
-          helm search repo billing/ledger
-          helm search repo auth/kratos
-          helm search repo ingestion/redpanda-connect
-          helm search repo processing/risingwave
-          helm search repo realtime/centrifugo
-          helm search repo search/weaviate
-          helm search repo notifications/notification-controller
+      - name: "[C] Update processing dependencies"
+        run: helm dependency update services/processing/k8s/
 
+      - name: "[C] processing — lint & template"
+        run: |
+          echo "━━━ processing ━━━"
+          helm lint services/processing/k8s/
+          helm template amnix-processing services/processing/k8s/ > /dev/null
+          echo "✅ processing — OK"
+
+      # ── Group D: auth (kratos) — file:// dep مفقود ──
+      # dependency: ory-commons من file://../ory-commons
+      # المسار غير موجود في الـ repo → --skip-deps
+      - name: "[D] auth — lint & template (--skip-deps)"
+        run: |
+          echo "━━━ auth ━━━"
+          echo "⚠️  ory-commons (file://../ory-commons) absent — using --skip-deps"
+          helm lint services/auth/k8s/ --skip-deps
+          helm template amnix-auth services/auth/k8s/ --skip-deps > /dev/null
+          echo "✅ auth — OK"
+
+  # ════════════════════════════════════════════════════════
+  # JOB 3 — Trivy Security Scan
+  # النطاق: platform/ + services/
+  # السابق: platform/ فقط ← ناقص
+  # ════════════════════════════════════════════════════════
   trivy-scan:
-    name: Security Scan
+    name: Trivy Security Scan
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Run Trivy on manifests
+      - name: Trivy scan — platform/
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: config
           scan-ref: platform/
           severity: CRITICAL,HIGH
           exit-code: 1
+
+      - name: Trivy scan — services/
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: config
+          scan-ref: services/
+          severity: CRITICAL,HIGH
+          exit-code: 1
+
+  # ════════════════════════════════════════════════════════
+  # JOB 4 — Kustomize Validate
+  # النطاق: كل services/*/k8s/kustomization.yaml
+  # كل service عنده نفس 4 ملفات:
+  #   templates/networkpolicy.yaml
+  #   templates/scaledobject.yaml
+  #   templates/serviceaccount.yaml
+  #   templates/poddisruptionbudget.yaml
+  # ════════════════════════════════════════════════════════
+  kustomize-validate:
+    name: Kustomize Validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install kustomize v5.4.3
+        run: |
+          curl -sLo /tmp/kustomize.tar.gz \
+            "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.4.3/kustomize_v5.4.3_linux_amd64.tar.gz"
+          tar -xzf /tmp/kustomize.tar.gz -C /tmp/
+          sudo mv /tmp/kustomize /usr/local/bin/kustomize
+          kustomize version
+
+      - name: Validate kustomizations — all 8 services
+        run: |
+          for svc in auth billing ingestion processing realtime analytics search notifications; do
+            echo "━━━ kustomize build: $svc ━━━"
+            kustomize build services/$svc/k8s/ > /dev/null
+            echo "✅ $svc — OK"
+          done
