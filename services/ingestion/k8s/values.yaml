@@ -8,8 +8,7 @@ deployment:
   replicaCount: 1
   # -- Annotations to add to Redpanda Connect Pods.
   podAnnotations:
-  linkerd.io/inject: enabled
-  # -- Labels to add to Redpanda Connect Pods.
+    linkerd.io/inject: enabled
   podLabels: {}
   # -- Set Annotations on the Redpanda Connect Deployment.
   annotations: {}
@@ -173,7 +172,12 @@ envFrom:
 
 # -- Resource limits and requests for the container.
 resources:
-  {}
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
   # By default, the chart does not specify default resources to increase the chances that it runs on environments with few
   # resources, such as Minikube. If you want to specify resources, uncomment the following
   # lines, adjust them as necessary, and remove the curly braces after 'resources:'.

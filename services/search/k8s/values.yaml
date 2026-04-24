@@ -82,7 +82,13 @@ updateStrategy:
   # and re-creating them in parallel all at once.
   # rollingUpdate:
   #   maxUnavailable: 100%
-resources: {}
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi
+  limits:
+    cpu: 1000m
+    memory: 2Gi
   # requests:
   #   cpu: '500m'
   #   memory: '300Mi'
@@ -92,7 +98,10 @@ resources: {}
 
 # security Context for the Weaviate Pods. The configurations are the same as setting them
 # as described here: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/
-securityContext: {}
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
 
 # Security context for the Weaviate container. Override overlapping settings made at the Pod level.
 containerSecurityContext: {}

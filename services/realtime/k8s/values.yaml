@@ -442,7 +442,13 @@ startupProbe: {}
 #  failureThreshold: 30
 #  periodSeconds: 10
 
-resources: {}
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
   # requests:
   #   cpu: 100m
   #   memory: 128Mi
