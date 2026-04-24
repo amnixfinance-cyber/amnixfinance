@@ -24,12 +24,7 @@ jobs:
       - name: Install helm-unittest plugin
         run: helm plugin install https://github.com/helm-unittest/helm-unittest
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.22'
-
       - name: Run helm unittest — ingestion
         run: |
           cd services/ingestion/k8s
-          go test -v ./...
+          helm unittest .
