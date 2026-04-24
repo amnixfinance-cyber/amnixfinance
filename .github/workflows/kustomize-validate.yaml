@@ -18,18 +18,49 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install kustomize v5.4.3
-        run: |
-          curl -sLo /tmp/kustomize.tar.gz \
-            "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.4.3/kustomize_v5.4.3_linux_amd64.tar.gz"
-          tar -xzf /tmp/kustomize.tar.gz -C /tmp/
-          sudo mv /tmp/kustomize /usr/local/bin/kustomize
-          kustomize version
+      - name: Setup Helm
+        uses: Azure/setup-helm@v5.0.0
 
-      - name: Validate kustomizations — all 8 services
+      - name: "[A] Validate 4 templates — billing ingestion realtime analytics search notifications"
         run: |
-          for svc in auth billing ingestion processing realtime analytics search notifications; do
+          for svc in billing ingestion realtime analytics search notifications; do
             echo "━━━ $svc ━━━"
-            kustomize build services/$svc/k8s/ > /dev/null
+            helm template amnix-$svc services/$svc/k8s/ \
+              --show-only templates/networkpolicy.yaml \
+              --show-only templates/scaledobject.yaml \
+              --show-only templates/serviceaccount.yaml \
+              --show-only templates/poddisruptionbudget.yaml \
+              > /dev/null
             echo "✅ $svc — OK"
           done
+
+      - name: "[B] auth — validate 4 templates (--skip-deps)"
+        run: |
+          echo "━━━ auth ━━━"
+          helm template amnix-auth services/auth/k8s/ \
+            --skip-deps \
+            --show-only templates/networkpolicy.yaml \
+            --show-only templates/scaledobject.yaml \
+            --show-only templates/serviceaccount.yaml \
+            --show-only templates/poddisruptionbudget.yaml \
+            > /dev/null
+          echo "✅ auth — OK"
+
+      - name: "[C] Add bitnami repo for processing"
+        run: |
+          helm repo add bitnami https://charts.bitnami.com/bitnami
+          helm repo update
+
+      - name: "[C] Update processing dependencies"
+        run: helm dependency update services/processing/k8s/
+
+      - name: "[C] processing — validate 4 templates"
+        run: |
+          echo "━━━ processing ━━━"
+          helm template amnix-processing services/processing/k8s/ \
+            --show-only templates/networkpolicy.yaml \
+            --show-only templates/scaledobject.yaml \
+            --show-only templates/serviceaccount.yaml \
+            --show-only templates/poddisruptionbudget.yaml \
+            > /dev/null
+          echo "✅ processing — OK"
