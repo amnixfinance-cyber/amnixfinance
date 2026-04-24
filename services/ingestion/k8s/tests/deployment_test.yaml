@@ -356,6 +356,7 @@ tests:
     set:
       deployment:
         rolloutConfigMap: false
+        podAnnotations: {}
       commonAnnotations:
         example.com/team: platform
     asserts:

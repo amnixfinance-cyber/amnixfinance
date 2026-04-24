@@ -477,7 +477,7 @@ topologySpreadConstraints: []
   #       app.kubernetes.io/name: centrifugo
 
 podDisruptionBudget:
-  enabled: false
+  enabled: true
   # Minimum number/percentage of pods that must remain available during disruption.
   # Cannot be used together with maxUnavailable.
   minAvailable: 1

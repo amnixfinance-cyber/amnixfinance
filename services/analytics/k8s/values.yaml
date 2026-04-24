@@ -185,7 +185,7 @@ server:
     accessModes:
       - ReadWriteOnce
 
-    # -- VolumeClassAttribute to user for persistent volume 
+    # -- VolumeClassAttribute to user for persistent volume
     volumeAttributesClassName:
 
     # -- Persistent volume annotations
@@ -298,7 +298,7 @@ server:
     # -- HTTPRoute extra labels
     extraLabels: {}
     # -- HTTPGateway objects refs
-    parentRefs: [] 
+    parentRefs: []
     # -- Array of hostnames
     hostnames: []
     # -- Extra rules to prepend to route. This is useful when working with annotation based services.
@@ -314,7 +314,7 @@ server:
   vmbackupmanager:
     # -- Enable automatic creation of backup via vmbackupmanager. vmbackupmanager is part of Enterprise packages
     enabled: false
-    
+
     image:
       # -- VMBackupManager image registry
       registry: ""
@@ -592,7 +592,7 @@ server:
               target_label: metrics_path
           # ignore timestamps of cadvisor's metrics by default
           # more info here https://github.com/VictoriaMetrics/VictoriaMetrics/issues/4697#issuecomment-1656540535
-          honor_timestamps: false 
+          honor_timestamps: false
         # Scrape config for service endpoints.
         #
         # The relabeling allows the actual service scrape endpoint to be configured

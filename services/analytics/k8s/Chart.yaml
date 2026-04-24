@@ -4,3 +4,7 @@ description: VictoriaMetrics Single Node analytics service — AmniX Finance
 type: application
 version: 1.0.0
 appVersion: "1.26.2"
+dependencies:
+  - name: victoria-metrics-common
+    version: ">=0.0.1"
+    repository: https://victoriametrics.github.io/helm-charts/

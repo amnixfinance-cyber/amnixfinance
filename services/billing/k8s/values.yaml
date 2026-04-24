@@ -1,13 +1,38 @@
-replicaCount: 1
+deployment:
+  replicaCount: 1
+  podAnnotations:
+    linkerd.io/inject: enabled
+  podLabels: {}
+  annotations: {}
+  restartPolicy: Always
+  terminationGracePeriodSeconds: 30
+  livenessProbe: {}
+  readinessProbe: {}
+  rolloutConfigMap: false
 
 image:
   repository: ghcr.io/formancehq/ledger
   pullPolicy: IfNotPresent
   tag: "v2.4.3"
 
+imagePullSecrets: []
+
+http:
+  enabled: true
+  address: "0.0.0.0:8093"
+  root_path: "/"
+  debug_endpoints: false
+  cors:
+    enabled: false
+
 service:
+  name: http
   type: ClusterIP
   port: 8093
+  targetPort: http
+  protocol: TCP
+  annotations: {}
+  extraPorts: []
 
 resources:
   requests:
@@ -21,16 +46,63 @@ autoscaling:
   enabled: false
   minReplicas: 1
   maxReplicas: 3
+  behavior: {}
+  metrics: []
 
-podAnnotations:
-  linkerd.io/inject: enabled
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
 
 securityContext:
   allowPrivilegeEscalation: false
   runAsNonRoot: true
+
+podSecurityContext: {}
+
 serviceMonitor:
   enabled: false
   interval: 30s
   scheme: http
   basicAuth: {}
   tlsConfig: {}
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+commonAnnotations: {}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts: []
+  tls: []
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+
+env: []
+envFrom: []
+args: []
+command: []
+initContainers: []
+extraVolumes: []
+extraVolumeMounts: []
+
+connectResources:
+  enabled: false
+  resourcesConfigMap: ""
+
+streams:
+  enabled: false
+  streamsConfigMap: ""
+  api:
+    enable: true
+
+telemetry: true
+watch: false
+updateStrategy: {}

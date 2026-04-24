@@ -34,6 +34,12 @@ jobs:
               services/*/k8s/templates/
               services/*/k8s/tests/
               services/*/.goreleaser/
+              services/auth/k8s/keto-secrets.yaml
+              services/auth/k8s/kratos-secrets.yaml
+              services/auth/k8s/ingress-api.yaml
+              services/auth/k8s/ingress-ui.yaml
+              services/auth/k8s/ingress-proxy.yaml
+              services/auth/k8s/oathkeeper-secrets.yaml
               services/*/.goreleaser.yml
               services/*/.goreleaser.yaml
               services/*/.golangci.yml
