@@ -34,7 +34,7 @@ data "aws_availability_zones" "available" {}
 
 locals {
   name   = basename(path.cwd)
-  region = "us-west-2"
+  region = var.region
 
   vpc_cidr = "10.0.0.0/16"
   azs      = slice(data.aws_availability_zones.available.names, 0, 3)
@@ -56,7 +56,7 @@ module "eks" {
 
   cluster_name                   = local.name
   cluster_version = "1.32"
-  cluster_endpoint_public_access = true
+  cluster_endpoint_public_access = false
 
   # EKS Addons
   cluster_addons = {
@@ -69,6 +69,14 @@ module "eks" {
   subnet_ids = module.vpc.private_subnets
 
   eks_managed_node_groups = {
+    spot = {
+      instance_types = ["m5.large", "m5a.large", "m4.large"]
+      capacity_type  = "SPOT"
+      min_size       = 1
+      max_size       = 20
+      desired_size   = 3
+      labels = { node-type = "spot" }
+    }
     initial = {
       instance_types = ["m5.large"]
 
@@ -175,7 +183,8 @@ module "vpc" {
   public_subnets  = [for k, v in local.azs : cidrsubnet(local.vpc_cidr, 8, k + 48)]
 
   enable_nat_gateway = true
-  single_nat_gateway = true
+  single_nat_gateway  = false
+  one_nat_gateway_per_az = true
 
   public_subnet_tags = {
     "kubernetes.io/role/elb" = 1
