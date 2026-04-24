@@ -145,6 +145,12 @@ spec:
         chart: oncall
         version: 1.16.5
         syncWave: "4"
+      - name: argo-rollouts
+        namespace: argo-rollouts
+        repoURL: https://argoproj.github.io/argo-helm
+        chart: argo-rollouts
+        version: 2.40.9
+        syncWave: "2"
       - name: backstage
         namespace: backstage
         repoURL: https://backstage.github.io/charts
